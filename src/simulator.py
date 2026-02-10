@@ -158,8 +158,13 @@ class fifo_sched:
         print(f'Average Reponse Time: {avg_response}')
 
 
-num_tasks = 10
-tasks = [task(0, np.random.randint(0,100)) for i in range(num_tasks)]
+tasks = [
+    task(
+        np.random.randint(0,20), 
+        np.random.randint(20, 150)
+    ) for i in range(10)
+]
+
 schedulers = [
     sjf_sched(copy.deepcopy(tasks)),
     stcf_sched(copy.deepcopy(tasks), 16),
