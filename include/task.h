@@ -1,67 +1,101 @@
 #ifndef SCHEDSIM_TASK_H
 #define SCHEDSIM_TASK_H
-#include <cstdint>
 
-using u32 = uint32_t;
+#include <cstdint>
+#include <sys/types.h>
+#include <chrono>
+
+using namespace std::literals;
+using hrclock_t     = std::chrono::high_resolution_clock;
+using time_point    = std::chrono::time_point<hrclock_t>;
+using ms_t          = std::chrono::milliseconds;
+
 enum class task_state {
-    NOTREADY    = 0, 
-    SLEEPING    = 1, 
-    BLOCKED     = 2, 
-    RUNNABLE    = 3, 
-    RUNNING     = 4, 
-    FINISHED    = 5
+    NOTREADY    = 0,    // task can not be scheduled yet
+    SLEEPING    = 1,    // task is sleeping (performing I/O)
+    BLOCKED     = 2,    // task is blocked (descheduled/evicted)
+    RUNNABLE    = 3,    // task is runnable
+    RUNNING     = 4,    // task is running
+    FINISHED    = 5     // task exited
 };
 
-class task {
+class task_t {
 private:
-    u32         rt_curr;    // current runtime
-    u32         rt_total;   // total runtime
-    u32         t_arr;      // arrival time
-    task_state  state;      // process state
+    const time_point    t_arrival;    // time of arrival
+    time_point          t_firstrun;   // time of first run
+    time_point          t_completion; // time of completion
+    ms_t                rt_current;   // current accumulated runtime
+    const ms_t          rt_total;     // total task runtime
+    pid_t               pid;          // process id
+    task_state          state;        // current task state
 public:
-    constexpr task() = default;
+    // t_firstrun, t_completion, and pid do not require initialization
+    // because they will be assigned before they are ever used
+    task_t(ms_t total) noexcept
+        : t_arrival(hrclock_t::now()), 
+          rt_current(0ms), 
+          rt_total(total),
+          state(task_state::RUNNABLE) {}
     
-    constexpr task(u32 rt_total_, u32 t_arr_) noexcept
-        : rt_curr(0), rt_total(rt_total_), 
-          t_arr(t_arr_), state(task_state::NOTREADY) {}
-
-    constexpr task(u32 rt_total_, u32 t_arr_, task_state state_) noexcept
-        : rt_curr(0), rt_total(rt_total_), t_arr(t_arr_), state(state_) {}
-
-    constexpr u32 get_rt_curr() const noexcept 
+    time_point 
+    get_t_arrival() const noexcept 
     { 
-        return this->rt_curr; 
-    }
-    constexpr void set_rt_curr(u32 new_rt_curr) noexcept
-    {
-        this->rt_curr = new_rt_curr;
+        return t_arrival; 
     }
 
-    constexpr u32 get_rt_total() const noexcept
-    {
-        return this->rt_total;
+    void
+    set_t_firstrun(time_point firstrun) noexcept
+    { 
+        t_firstrun = firstrun;
     }
-    constexpr void set_rt_total(u32 new_rt_total) noexcept
+    
+    void
+    set_t_completion(time_point completion) noexcept
     {
-        this->rt_total = new_rt_total;
-    }
-
-    constexpr u32 get_t_arr() const noexcept
-    {
-        return this->t_arr;
-    }
-    constexpr void set_t_arr(u32 new_t_arr) noexcept
-    {
-        this->t_arr = new_t_arr;
+        t_completion = completion;
     }
 
-    constexpr task_state get_state() const noexcept
+    void
+    increment_rt_curr(ms_t rt_acc) noexcept
     {
-        return this->state;
+        if ((rt_current += rt_acc) > rt_total) {
+            rt_current = rt_total;
+            state = task_state::FINISHED;
+        }
     }
-    constexpr void set_state(task_state new_state) noexcept
-    {
-        this->state = new_state;
+
+    ms_t
+    get_rt_total() const noexcept 
+    { 
+        return rt_total; 
+    }
+
+    pid_t
+    get_pid() const noexcept 
+    { 
+        return pid; 
+    }
+    
+    // Returning the pid after setting is for the convenience of doing
+    // something like this:
+    // switch (task.set_pid = fork()) {}
+    pid_t
+    set_pid(pid_t new_pid) const noexcept 
+    { 
+        pid = new_pid;
+        return pid;
+    }
+
+    task_state
+    get_state() const noexcept 
+    { 
+        return state; 
+    }
+
+    void
+    set_state(task_state new_state) noexcept 
+    { 
+        state = new_state; 
     }
 };
 

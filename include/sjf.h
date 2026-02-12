@@ -1,41 +1,88 @@
 #ifndef SCHEDSIM_SJF_H
 #define SCHEDSIM_SJF_H
 
-#include <queue>
 #include <vector>
-#include <condition_variable>
-#include <mutex>
+#include <semaphore>
 #include <utility>
+#include <algorithm>
+#include <unistd.h>
+#include <err.h>
+#include <sys/wait.h>
+#include <sys/types.h>
 #include "task.h"
 
 namespace sched {
 class sjf {
 private:
-    enum class flag_t { START, STOP, NONE };
-    struct cmp {
-        bool operator()(const task &t1, const task &t2)
-        {
-            return t2.get_t_arr() < t1.get_t_arr();
+    void 
+    schedule_task(size_t task_ix) noexcept
+    {
+        task_t *task = tasks[task_ix];
+        tasks.erase(begin(tasks) + task_ix);
+        
+        task->set_t_firstrun(hrclock_t::now());
+        switch (task.set_pid(fork())) {
+            case -1:
+                err(EXIT_FAILURE, "fork");
+            case 0:
+                // simulate running for rt_total
+                std::this_thread::sleep_for(task.get_rt_total());
+            default:
+                waitpid(task.getpid(), nullptr, 0);
+                task->set_t_completion(hrclock_t::now());
         }
-    };
-    void schedule(task &curr_task) noexcept;
-private:
-    std::priority_queue<task, std::vector<task>, cmp>   tasks;
-    std::vector<std::pair<float, float>>                stats;
-    std::condition_variable                             cv;
-    std::mutex                                          tasks_mutex;
-    std::thread                                         sched_thread;
-    u32                                                 t_curr;
-    flag_t                                              flag;
+    }
+    
+    [[nodiscard]] size_t 
+    get_shortest_job() const noexcept 
+    {
+        return std::min_element(begin(tasks), end(tasks),
+            [](const task_t *t1, const task_t *t2) {
+                return t1->get_t_arrival() < t2->get_t_arrival();
+            }) - begin(tasks);
+    }
+    
+    std::vector<task_t *>   tasks;      // schedulable tasks
+    std::thread             scheduler;  // scheduler thread
+    std::binary_sempahore   sem;        // for locking task list
+    bool                    stop;       // prompts scheduler to return
 public:
-    sjf();
-    sjf(const std::vector<task> &tasks_);
-    ~sjf();
+    sjf() : sem(1), stop(false) noexcept
+    {
+        scheduler = std::thread([this]{
+            while (true) {
+                sem.acquire();
+                if (tasks.empty()) {
+                    if (stop)
+                        return;
+                    sem.release();
+                    continue;
+                }
+                schedule_task(get_shortest_job());
+                sem.release();
+            }
+        });
+    }
+    
+    ~sjf()
+    {
+        stop = true;
+        scheduler.join();
+    }
+    
+    void enqueue(task_t &task) noexcept
+    {
+        sem.acquire();
+        tasks.push_back(&task);
+        sem.release();
+    }
 
-    void enqueue(task &&new_task) noexcept;
-    void start() noexcept;
-    void stop() noexcept;
-    void display_stats() const noexcept;
+    void enqueue(task_t *p_task) noexcept
+    {
+        sem.acquire();
+        tasks.push_back(p_task);
+        sem.release();
+    }
 };
 } // namespace sched
 #endif
