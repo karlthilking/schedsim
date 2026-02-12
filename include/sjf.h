@@ -1,3 +1,6 @@
+#ifndef SCHEDSIM_SJF_H
+#define SCHEDSIM_SJF_H
+
 #include <queue>
 #include <vector>
 #include <condition_variable>
@@ -25,7 +28,9 @@ public:
     sjf();
     sjf(const std::vector<task> &tasks_);
     
-    void enqueue() noexcept;
+    void enqueue(task &new_task) noexcept;
     void stop() noexcept;
     void display_stats() const noexcept;
 };
+
+#endif

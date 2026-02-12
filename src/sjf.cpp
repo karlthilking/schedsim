@@ -15,14 +15,14 @@ void sjf::schedule(task &curr_task) noexcept
         this->t_curr = curr_task.get_t_arr();
     }
     curr_task.set_state(task_state::RUNNING);
-    float t_reponse = 
+    float t_response = 
         static_cast<float>(t_curr) - static_cast<float>(curr_task.get_t_arr());
     this->t_curr += curr_task.get_rt_total();
     curr_task.set_rt_curr(curr_task.get_rt_total());
     curr_task.set_state(task_state::FINISHED);
     this->stats.emplace_back(
         static_cast<float>(t_curr) - static_cast<float>(curr_task.get_t_arr()),
-        t_response;
+        t_response
     );
     return;
 }
@@ -32,12 +32,12 @@ sjf::sjf()
 {
     std::thread scheduler([this] {
         while (true) {
-            cv.wait(tasks_mutex, [this] { 
-                return this->done || !(this->tasks.empty());
-            });
             task curr_task;
             {
-                std::scoped_lock lock(this->tasks_mutex);
+                std::unique_lock<std::mutex> lock(tasks_mutex);
+                cv.wait(lock, [this] { 
+                    return this->done || !(this->tasks.empty());
+                });
                 if (this->done && this->tasks.empty()) {
                     return;
                 }
@@ -54,7 +54,7 @@ sjf::sjf(const std::vector<task> &tasks_)
     : tasks(begin(tasks_), end(tasks_)), t_curr(0), done(false)
 {
     u32 n_imm_tasks = tasks.size();
-    std::thread scheduler([this] {
+    std::thread scheduler([&] {
         while (n_imm_tasks--) {
             task curr_task;
             {
@@ -68,12 +68,12 @@ sjf::sjf(const std::vector<task> &tasks_)
             this->schedule(curr_task);
         }
         while (true) {
-            cv.wait(tasks_mutex, [this] {
-                return this->done | !(this->tasks.empty());
-            });
             task curr_task;
             {
-                std::scoped_lock lock(this->tasks_mutex);
+                std::unique_lock<std::mutex> lock(tasks_mutex);
+                cv.wait(lock, [this] {
+                    return this->done | !(this->tasks.empty());
+                });
                 if (this->done && this->tasks.empty()) { 
                     return; 
                 }
