@@ -8,8 +8,10 @@
 #include <utility>
 #include "task.h"
 
+namespace sched {
 class sjf {
 private:
+    enum class flag_t { START, STOP, NONE };
     struct cmp {
         bool operator()(const task &t1, const task &t2)
         {
@@ -22,15 +24,18 @@ private:
     std::vector<std::pair<float, float>>                stats;
     std::condition_variable                             cv;
     std::mutex                                          tasks_mutex;
+    std::thread                                         sched_thread;
     u32                                                 t_curr;
-    bool                                                done;
+    flag_t                                              flag;
 public:
     sjf();
     sjf(const std::vector<task> &tasks_);
-    
-    void enqueue(task &new_task) noexcept;
+    ~sjf();
+
+    void enqueue(task &&new_task) noexcept;
+    void start() noexcept;
     void stop() noexcept;
     void display_stats() const noexcept;
 };
-
+} // namespace sched
 #endif

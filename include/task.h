@@ -4,7 +4,12 @@
 
 using u32 = uint32_t;
 enum class task_state {
-    NOTREADY, SLEEPING, BLOCKED, RUNNABLE, RUNNING, FINISHED 
+    NOTREADY    = 0, 
+    SLEEPING    = 1, 
+    BLOCKED     = 2, 
+    RUNNABLE    = 3, 
+    RUNNING     = 4, 
+    FINISHED    = 5
 };
 
 class task {
@@ -15,6 +20,11 @@ private:
     task_state  state;      // process state
 public:
     constexpr task() = default;
+    
+    constexpr task(u32 rt_total_, u32 t_arr_) noexcept
+        : rt_curr(0), rt_total(rt_total_), 
+          t_arr(t_arr_), state(task_state::NOTREADY) {}
+
     constexpr task(u32 rt_total_, u32 t_arr_, task_state state_) noexcept
         : rt_curr(0), rt_total(rt_total_), t_arr(t_arr_), state(state_) {}
 
