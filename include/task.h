@@ -78,7 +78,7 @@ public:
     
     // Returning the pid after setting is for the convenience of doing
     // something like this:
-    // switch (task.set_pid = fork()) {}
+    // switch (task.set_pid(fork())) {}
     pid_t
     set_pid(pid_t new_pid) const noexcept 
     { 
