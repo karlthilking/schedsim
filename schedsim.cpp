@@ -6,6 +6,7 @@
 #include <chrono>
 #include <utility>
 #include <algorithm>
+#include <fcntl.h>
 #include "task.h"
 #include "sjf.h"
 
@@ -48,28 +49,28 @@ main(int argc, char *argv[])
     std::uniform_int_distribution<> int_dist(0, 25);
     
     // generate random number of tasks
-    uint8_t notasks = 10;
-    std::cout << "Scheduling " << notasks << " tasks\n";
+    int notasks{(int_dist(gen) + 10) % 25};
+    std::cout << "Scheduling " << std::to_string(notasks) << " tasks\n";
    
     std::vector<task_t> tasks;
     tasks.reserve(notasks);
     time_point sched_start = hrclock_t::now();
     if (schedopt & USE_SJF) {
         sched::sjf sjf_scheduler;
-        for (int i{}; i < notasks; ++i) {
+        for (int i{}; i < notasks;) {
             // add task with a random total runtime
-            tasks.emplace_back(ms_t{int_dist(gen) * 100 + int_dist(gen)});
+            tasks.emplace_back(ms_t{int_dist(gen) * 100 + int_dist(gen)}, ++i);
             sjf_scheduler.enqueue(&tasks.back());
-            if (!(int_dist(gen) % 2))
+            if (int_dist(gen) % 3)
                 std::this_thread::sleep_for(ms_t{int_dist(gen)});
+
+            auto t_arrival = std::chrono::duration_cast<ms_t>(
+                tasks.back().get_t_arrival() - sched_start
+            );
+            std::cout << "(Task " << std::to_string(i) << ") Arrival: "
+                      << t_arrival << ", Total Runtime: "
+                      << tasks.back().get_rt_total() << '\n';
         }
-    }
-    int taskno = 1;
-    for (const task_t &t : tasks) {
-        std::cout << "(Task " << taskno++ << ") Arrival Time: "
-                  << std::chrono::duration_cast<ms_t>(t.get_t_arrival() -
-                     sched_start) << ", Total Runtime: " 
-                  << t.get_rt_total() << '\n';
     }
 
     float avg_response_t = 0.0f, avg_turnaround_t = 0.0f;
@@ -82,9 +83,9 @@ main(int argc, char *argv[])
                 task.get_t_completion() - task.get_t_arrival()
             ).count();
         });
-    avg_response_t /= tasks.size();;
+    avg_response_t /= tasks.size();
     avg_turnaround_t /= tasks.size();
-
+    
     std::cout << "Average Response Time: " << avg_response_t << "ms"
               << ", Average Turnaround Time: " << avg_turnaround_t << "ms\n";
     exit(0);

@@ -9,6 +9,7 @@
 #include <err.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <cassert>
 #include "task.h"
 
 namespace sched {
@@ -17,13 +18,12 @@ private:
     void 
     schedule_task(size_t task_ix) noexcept
     {
-        static int taskno = 1;
         task_t *task = tasks[task_ix];
         tasks.erase(begin(tasks) + task_ix);
         // done with tasks vector, release semaphore to give a chance for main
         // thread to continue to enqueue more tasks
         sem.release(); 
-
+        
         task->set_t_firstrun(hrclock_t::now());
         switch (task->set_pid(fork())) {
             case -1:
@@ -37,7 +37,6 @@ private:
             default:
                 waitpid(task->get_pid(), nullptr, 0);
                 task->set_t_completion(hrclock_t::now());
-                std::cout << "Task " << taskno++ << " exited\n";
         }
     }
     
@@ -46,10 +45,11 @@ private:
     {
         size_t min_pos = std::min_element(begin(tasks), end(tasks),
             [](const task_t *t1, const task_t *t2) {
-                return t1->get_t_arrival() < t2->get_t_arrival();
+                return t1->get_rt_total() < t2->get_rt_total();
             }) - begin(tasks);
-        
-        std::cout << "Shortest: " << tasks[min_pos]->get_rt_total() << '\n';
+        std::cout << "Scheduling Task " 
+                  << std::to_string(tasks[min_pos]->get_taskid())
+                  << ", Runtime: " << tasks[min_pos]->get_rt_total() << '\n';
         return min_pos;
     }
     

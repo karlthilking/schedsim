@@ -28,14 +28,16 @@ private:
     ms_t                rt_current;   // current accumulated runtime
     const ms_t          rt_total;     // total task runtime
     pid_t               pid;          // process id
+    uint8_t             taskid;       // for debugging/print statements
     task_state          state;        // current task state
 public:
     // t_firstrun, t_completion, and pid do not require initialization
     // because they will be assigned before they are ever used
-    task_t(ms_t total) noexcept
+    task_t(ms_t total, uint8_t id) noexcept
         : t_arrival(hrclock_t::now()), 
           rt_current(0ms), 
           rt_total(total),
+          taskid(id),
           state(task_state::RUNNABLE) {}
     
     time_point 
@@ -95,6 +97,12 @@ public:
     { 
         pid = new_pid;
         return pid;
+    }
+
+    uint8_t
+    get_taskid() const noexcept
+    {
+        return taskid;
     }
 
     task_state
