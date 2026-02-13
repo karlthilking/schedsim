@@ -1,3 +1,7 @@
 a.out
 *.o
+!*.c
+!*.h
+!*.py
+!Makefile
 

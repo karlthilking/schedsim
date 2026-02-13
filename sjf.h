@@ -15,14 +15,8 @@ namespace sched {
 class sjf {
 private:
     void 
-    schedule_task(size_t task_ix) noexcept
+    schedule_task(task_t *task) noexcept
     {
-        task_t *task = tasks[task_ix];
-        tasks.erase(begin(tasks) + task_ix);
-        // done with tasks vector, release semaphore to give a chance for main
-        // thread to continue to enqueue more tasks
-        sem.release(); 
-        
         task->set_t_firstrun(hrclock_t::now());
         switch (task->set_pid(fork())) {
             case -1:
@@ -34,8 +28,10 @@ private:
                     ;
                 exit(0);
             default:
-                waitpid(task->get_pid(), nullptr, 0);
+                if (waitpid(task->get_pid(), nullptr, 0) < 0)
+                    err(EXIT_FAILURE, "waitpid");
                 task->set_t_completion(hrclock_t::now());
+                return;
         }
     }
     
@@ -52,32 +48,44 @@ private:
         return min_pos;
     }
     
-    std::vector<task_t *>   tasks;      // schedulable tasks
-    std::thread             scheduler;  // scheduler thread
-    std::binary_semaphore   sem;        // for locking task list
-    bool                    stop;       // prompts scheduler to return
+    std::vector<task_t *>       tasks;          // schedulable tasks
+    std::vector<std::thread>    sched_threads;  // scheduler thread
+    std::binary_semaphore       sem;            // for locking task list
+    bool                        stop;           // prompts scheduler to return
 public:
-    sjf() noexcept 
+    sjf(uint32_t ncpus = 1) noexcept 
         : sem(1), stop(false)
     {
-        scheduler = std::thread([this]{
-            while (true) {
-                sem.acquire();
-                if (tasks.empty()) {
-                    if (stop)
-                        return;
+        sched_threads.reserve(ncpus);
+        for (uint32_t cpuid{}; cpuid < ncpus; ++cpuid) {
+            sched_threads.emplace_back([this]{
+                while (true) {
+                    do {
+                        std::this_thread::yield();
+                    } while (!sem.try_acquire());
+
+                    if (tasks.empty()) {
+                        sem.release();
+                        if (stop)
+                            return;
+                        continue;
+                    }
+                    
+                    size_t ix = get_shortest_job();
+                    task_t *task = tasks[ix];
+                    tasks.erase(begin(tasks) + ix);
                     sem.release();
-                    continue;
+                    schedule_task(task);
                 }
-                schedule_task(get_shortest_job());
-            }
-        });
+            });
+        }
     }
     
     ~sjf()
     {
         stop = true;
-        scheduler.join();
+        for (std::thread &th : sched_threads)
+            th.join();
     }
     
     void 

@@ -11,19 +11,24 @@
 #include "sjf.h"
 #include "rr.h"
 
-#define OPT_SJF 0x1
-#define OPT_RR  0x2
-#define OPT_SH  0x4
+#define OPT_SJF     0x1  // simulate shortest job first
+#define OPT_RR      0x2  // simulate round robin
+#define OPT_SL      0x4  // minimal/silent output 
+#define OPT_VB      0x8  // verbose output
+#define SCHED_MASK  0x3  // check if any scheduler was selected
 
 void 
 print_usage()
 {
-    std::cout << "Usage: ./schedsim [options]\n\n"
-              << "Selecting a scheduler to simulate:\n"
-              << "\t-s=SCHEDULER or --scheduler=SCHEDULER\n"
-              << "Scheduler options:\n"
-              << "\t* sjf (Shortest-Job-First Scheduler)\n"
-              << "\t* rr (Round Robin Scheduler)\n\n";
+    std::cout << "Usage: ./schedsim [options]\n\nOptions:\n"
+              << "Selecting a Scheduler:\n"
+              << "\t-s=SCHEDULER\tSee section on scheduler options\n\n"
+              << "Tunable Parameters:\n"
+              << "\t--ncpus=N\tSimulate scheduling on N cpus\n"
+              << "\t--timeslice=T\tSimulate a timeslice of T milliseconds\n"
+              << "\nScheduler Options:\n"
+              << "\t* sjf\t\tShortest-Job-First Scheduler\n"
+              << "\t* rr\t\tRound Robin Scheduler\n\n";
 }
 
 int
@@ -39,6 +44,8 @@ std::vector<ms_t>
 random_rt_gen()
 {
     int ntasks((rand_gen() % 25) + 10);
+    std::cout << "Running " << std::to_string(ntasks) << " tasks\n";
+
     std::vector<ms_t> rts;
     rts.reserve(ntasks);
     
@@ -49,7 +56,7 @@ random_rt_gen()
 
 template<typename S>
 std::vector<task_t> *
-simulate_sched(S &&sched, const std::vector<ms_t> &runtimes)
+simulate_sched(S &&sched, const std::vector<ms_t> &runtimes, uint8_t opt)
 {
     std::vector<task_t> *tasks = new std::vector<task_t>{};
     tasks->reserve(runtimes.size());
@@ -61,14 +68,16 @@ simulate_sched(S &&sched, const std::vector<ms_t> &runtimes)
 
         // add random sleep so tasks dont all arrive at the same time
         if (rand_gen() % 3)
-            std::this_thread::sleep_for(ms_t{rand_gen()});
+            std::this_thread::sleep_for(ms_t{rand_gen() * 5});
 
         auto t_arrival = std::chrono::duration_cast<ms_t>(
             tasks->back().get_t_arrival() - start
         );
-        std::cout << "(Task " << std::to_string(i + 1) << ") Arrival Time: "
-                  << t_arrival << ", Total Runtime: "
-                  << tasks->back().get_rt_total() << '\n';
+        if (!(opt & OPT_SL)) {
+            std::cout << "(Task " << std::to_string(i + 1) << ") Arrival Time: "
+                << t_arrival << ", Total Runtime: "
+                << tasks->back().get_rt_total() << '\n';
+        }
     }
     return tasks;
 }
@@ -101,32 +110,44 @@ main(int argc, char *argv[])
         print_usage();
         exit(1);
     }
-    int opt = 0;
+    uint8_t opt = 0;
+    // default parameters: cpus=1, timeslice=48ms
+    uint32_t ncpus = 1;     
+    ms_t timeslice = 48ms;  
     for (int i{1}; i < argc; ++i) {
         if (!strncmp(argv[i], "-s=sjf", 6)) {
             opt |= OPT_SJF;
         } else if (!strncmp(argv[i], "-s=rr", 5)) {
             opt |= OPT_RR;
+        } else if (!strncmp(argv[i], "--silent", 8)) {
+            opt |= OPT_SL;
+        } else if (!strncmp(argv[i], "--verbose", 9)) {
+            opt |= OPT_VB;
+        } else if (!strncmp(argv[i], "--ncpus=", 8)) {
+            ncpus = std::stoi(argv[i] + 8);
+        } else if (!strncmp(argv[i], "--timeslice=", 12)) {
+            timeslice = ms_t{std::stoi(argv[i] + 12)};
         } else {
             std::cerr << "Unrecognized argument: " << argv[i] << '\n';
             exit(1);
         }
     }
-    if (!opt) {
+    if (!(opt & SCHED_MASK)) {
         std::cerr << "No scheduler selected. Exiting...\n";
         exit(1);
     }
     
     std::vector<ms_t> rand_rts = random_rt_gen();
+    std::vector<task_t> *tasks;
     if (opt & OPT_SJF) {
         std::cout << "Simulating SJF Scheduler\n";
-        std::vector<task_t> *tasks = simulate_sched(sched::sjf{}, rand_rts);
+        tasks = simulate_sched(sched::sjf{ncpus}, rand_rts, opt);
         report_stats(*tasks);
         delete tasks;
     }
     if (opt & OPT_RR) {
         std::cout << "Simulating Round Robin Scheduler\n";
-        std::vector<task_t> *tasks = simulate_sched(sched::rr{}, rand_rts);
+        tasks = simulate_sched(sched::rr{ncpus, timeslice, opt}, rand_rts, opt);
         report_stats(*tasks);
         delete tasks;
     }
