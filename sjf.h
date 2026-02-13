@@ -9,7 +9,6 @@
 #include <err.h>
 #include <sys/wait.h>
 #include <sys/types.h>
-#include <cassert>
 #include "task.h"
 
 namespace sched {
@@ -90,10 +89,10 @@ public:
     }
 
     void 
-    enqueue(task_t *p_task) noexcept
+    enqueue(task_t *task) noexcept
     {
         sem.acquire();
-        tasks.push_back(p_task);
+        tasks.push_back(task);
         sem.release();
     }
 };

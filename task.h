@@ -68,13 +68,14 @@ public:
         t_completion = completion;
     }
 
-    void
+    ms_t
     increment_rt_curr(ms_t rt_acc) noexcept
     {
         if ((rt_current += rt_acc) > rt_total) {
             rt_current = rt_total;
             state = task_state::FINISHED;
         }
+        return rt_current;
     }
 
     ms_t
