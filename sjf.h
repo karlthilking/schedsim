@@ -33,7 +33,6 @@ private:
                 while (std::chrono::duration_cast<ms_t>(hrclock_t::now() -
                        task->get_t_firstrun()) < task->get_rt_total())
                     ;
-                std::this_thread::sleep_for(task->get_rt_total());
                 exit(0);
             default:
                 waitpid(task->get_pid(), nullptr, 0);
@@ -45,10 +44,13 @@ private:
     [[nodiscard]] size_t 
     get_shortest_job() const noexcept 
     {
-        return std::min_element(begin(tasks), end(tasks),
+        size_t min_pos = std::min_element(begin(tasks), end(tasks),
             [](const task_t *t1, const task_t *t2) {
                 return t1->get_t_arrival() < t2->get_t_arrival();
             }) - begin(tasks);
+        
+        std::cout << "Shortest: " << tasks[min_pos]->get_rt_total() << '\n';
+        return min_pos;
     }
     
     std::vector<task_t *>   tasks;      // schedulable tasks

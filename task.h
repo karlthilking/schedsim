@@ -9,6 +9,7 @@ using namespace std::literals;
 using hrclock_t     = std::chrono::high_resolution_clock;
 using time_point    = std::chrono::time_point<hrclock_t>;
 using ms_t          = std::chrono::milliseconds;
+using sec_t         = std::chrono::seconds;
 
 enum class task_state {
     NOTREADY    = 0,    // task can not be scheduled yet
