@@ -5,14 +5,19 @@
 #include <vector>
 #include <thread>
 #include <semaphore>
+#include <algorithm>
 
 namespace sched {
-class round_robin {
+class rr {
 private:
     void
     schedule_task(task_t *task) noexcept
     {
-        time_point t_start = hrclock_t::now();
+        std::cout << "Scheduling " << std::to_string(task->get_taskid())
+                  << " (" << task->get_rt_curr() << '/' << task->get_rt_total()
+                  << ")\n";
+        static time_point t_start{};
+        t_start = hrclock_t::now();
 
         // task has not been scheduled before
         if (task->get_state() == task_state::RUNNABLE) {
@@ -22,15 +27,17 @@ private:
         task->set_state(task_state::RUNNING);
         // spin to simulate the task consuming a timeslice
         std::thread task_thread([&]{
-            while (std::duration_cast<ms_t>(hrclock_t::now() - t_start)
-                   < timeslice)
-                ;
+            std::this_thread::sleep_for(
+                std::min(timeslice, task->get_rt_remaining())
+            );
             return;
         });
         task_thread.join();
 
-        if ((task->increment_rt_curr(timeslice)) > task->get_rt_total())
+        if ((task->increment_rt_curr(timeslice)) >= task->get_rt_total()) {
+            task->set_t_completion(hrclock_t::now());
             return;
+        }
 
         // if the task is a candidate to be requeued, set its current
         // state to blocked and push it back onto the queue
@@ -40,24 +47,27 @@ private:
         sem.release();
     }
 
-    std::queue<task_t *>    tasks;
-    std::vector<thread>     sched_threads;
-    ms_t                    timeslice;
-    std::binary_semaphore   sem;
-    bool                    stop;
+    std::queue<task_t *>        tasks;
+    std::vector<std::thread>    sched_threads;
+    ms_t                        timeslice;
+    std::binary_semaphore       sem;
+    bool                        stop;
 public:
-    round_robin(uint32_t ncpus = std::thread::hardware_concurrency(),
-                ms_t timeslice = 8ms) noexcept
+    rr(uint32_t ncpus = std::thread::hardware_concurrency(),
+       ms_t timeslice = 24ms) noexcept
         : timeslice(timeslice), sem(1), stop(false)
     {
-        for (uint32_t i{}; i < ncpus; ++i) {
-            sched_thread.emplace_back([this]{
+        for (uint32_t cpuid{}; cpuid < ncpus; ++cpuid) {
+            sched_threads.emplace_back([this] {
                 while (true) {
-                    sem.acquire();
+                    do {
+                        std::this_thread::yield();
+                    } while (!sem.try_acquire());
+
                     if (tasks.empty()) {
+                        sem.release();
                         if (stop)
                             return;
-                        sem.release();
                         continue;
                     }
                     task_t *task = tasks.front();
@@ -69,18 +79,19 @@ public:
         }
     }
 
-    ~round_robin()
+    ~rr()
     {
         stop = true;
-        for (std::thread &th : threads)
+        for (std::thread &th : sched_threads) {
             th.join();
+        }
     }
     
     void
     enqueue(task_t &task) noexcept
     {
         sem.acquire();
-        tasks.push(task);
+        tasks.push(&task);
         sem.release();
     }
 

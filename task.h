@@ -22,14 +22,14 @@ enum class task_state {
 
 class task_t {
 private:
-    const time_point    t_arrival;    // time of arrival
-    time_point          t_firstrun;   // time of first run
-    time_point          t_completion; // time of completion
-    ms_t                rt_current;   // current accumulated runtime
-    const ms_t          rt_total;     // total task runtime
-    pid_t               pid;          // process id
-    uint8_t             taskid;       // for debugging/print statements
-    task_state          state;        // current task state
+    time_point  t_arrival;    // time of arrival
+    time_point  t_firstrun;   // time of first run
+    time_point  t_completion; // time of completion
+    ms_t        rt_current;   // current accumulated runtime
+    ms_t        rt_total;     // total task runtime
+    pid_t       pid;          // process id
+    uint8_t     taskid;       // for debugging/print statements
+    task_state  state;        // current task state
 public:
     // t_firstrun, t_completion, and pid do not require initialization
     // because they will be assigned before they are ever used
@@ -39,6 +39,48 @@ public:
           rt_total(total),
           taskid(id),
           state(task_state::RUNNABLE) {}
+    
+    task_t(const task_t &other)
+        : t_arrival(other.t_arrival),
+          rt_current(other.rt_current),
+          rt_total(other.rt_total),
+          taskid(other.taskid),
+          state(other.state)
+    {}
+
+    task_t(task_t &&other) noexcept
+        : t_arrival(std::move(other.t_arrival)),
+          rt_current(std::move(other.rt_current)),
+          rt_total(other.rt_total),
+          taskid(other.taskid),
+          state(other.state)
+    {}
+
+    task_t &
+    operator=(const task_t &other) 
+    {
+        if (this != &other) {
+            t_arrival = other.t_arrival;
+            rt_current = other.rt_current;
+            rt_total = other.rt_total;
+            taskid = other.taskid;
+            state = other.state;
+        }
+        return *this;
+    }
+
+    task_t &
+    operator=(task_t &&other) noexcept
+    {
+        if (this != &other) {
+            t_arrival = std::move(other.t_arrival);
+            rt_current = std::move(other.rt_current);
+            rt_total = std::move(other.rt_total);
+            taskid = std::move(other.taskid);
+            state = std::move(other.state);
+        }
+        return *this;
+    }
     
     time_point 
     get_t_arrival() const noexcept 
@@ -76,6 +118,16 @@ public:
             state = task_state::FINISHED;
         }
         return rt_current;
+    }
+    ms_t
+    get_rt_curr() const noexcept
+    {
+        return rt_current;
+    }
+    ms_t
+    get_rt_remaining() const noexcept
+    {
+        return rt_total - rt_current;
     }
 
     ms_t
