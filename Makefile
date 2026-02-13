@@ -1,22 +1,19 @@
 CXXC=g++
 CXXFLAGS=-std=c++20 -g3 -O0 -Wall -Werror -Wextra
-PROGRAMS=src/freebsd.cpp src/linux.cpp src/generic.cpp
 
-all: $(PROGRAMS)
+all: schedsim
 
-freebsd: freebsd.cpp
-	$(CXXC) $(CXXFLAGS) -o $@ $<
+define build
+	$(CXXC) $(CXXFLAGS) -o schedsim schedsim.cpp
+	@echo '$(CXXC) $(CXXFLAGS) -o schedsim schedsim.cpp'
+endef
 
-linux: linux.cpp
-	$(CXXC) $(CXXFLAGS) -o $@ $<
-
-generic: generic.cpp
-	$(CXXC) $(CXXFLAGS) -o $@ $<
+schedsim:
+	@$(call build)
 
 release:
 	$(eval CXXFLAGS:=-std=c++20 -03 -Wall -Werror -Wextra)
-	$(PROGRAMS)
 
 clean:
-	rm -f *.o $(PROGRAMS)
+	rm -f *.o schedsim
 

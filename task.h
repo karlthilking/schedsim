@@ -42,13 +42,23 @@ public:
     { 
         return t_arrival; 
     }
-
+    
+    time_point
+    get_t_firstrun() const noexcept
+    {
+        return t_firstrun;
+    }
     void
     set_t_firstrun(time_point firstrun) noexcept
     { 
         t_firstrun = firstrun;
     }
     
+    time_point
+    get_t_completion() const noexcept
+    {
+        return t_completion;
+    }
     void
     set_t_completion(time_point completion) noexcept
     {
@@ -80,7 +90,7 @@ public:
     // something like this:
     // switch (task.set_pid(fork())) {}
     pid_t
-    set_pid(pid_t new_pid) const noexcept 
+    set_pid(pid_t new_pid) noexcept 
     { 
         pid = new_pid;
         return pid;
@@ -91,7 +101,6 @@ public:
     { 
         return state; 
     }
-
     void
     set_state(task_state new_state) noexcept 
     { 

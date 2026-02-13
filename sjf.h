@@ -17,19 +17,28 @@ private:
     void 
     schedule_task(size_t task_ix) noexcept
     {
+        static int taskno = 1;
         task_t *task = tasks[task_ix];
         tasks.erase(begin(tasks) + task_ix);
-        
+        // done with tasks vector, release semaphore to give a chance for main
+        // thread to continue to enqueue more tasks
+        sem.release(); 
+
         task->set_t_firstrun(hrclock_t::now());
-        switch (task.set_pid(fork())) {
+        switch (task->set_pid(fork())) {
             case -1:
                 err(EXIT_FAILURE, "fork");
             case 0:
                 // simulate running for rt_total
-                std::this_thread::sleep_for(task.get_rt_total());
+                while (std::chrono::duration_cast<ms_t>(hrclock_t::now() -
+                       task->get_t_firstrun()) < task->get_rt_total())
+                    ;
+                std::this_thread::sleep_for(task->get_rt_total());
+                exit(0);
             default:
-                waitpid(task.getpid(), nullptr, 0);
+                waitpid(task->get_pid(), nullptr, 0);
                 task->set_t_completion(hrclock_t::now());
+                std::cout << "Task " << taskno++ << " exited\n";
         }
     }
     
@@ -44,10 +53,11 @@ private:
     
     std::vector<task_t *>   tasks;      // schedulable tasks
     std::thread             scheduler;  // scheduler thread
-    std::binary_sempahore   sem;        // for locking task list
+    std::binary_semaphore   sem;        // for locking task list
     bool                    stop;       // prompts scheduler to return
 public:
-    sjf() : sem(1), stop(false) noexcept
+    sjf() noexcept 
+        : sem(1), stop(false)
     {
         scheduler = std::thread([this]{
             while (true) {
@@ -59,7 +69,6 @@ public:
                     continue;
                 }
                 schedule_task(get_shortest_job());
-                sem.release();
             }
         });
     }
@@ -70,14 +79,16 @@ public:
         scheduler.join();
     }
     
-    void enqueue(task_t &task) noexcept
+    void 
+    enqueue(task_t &task) noexcept
     {
         sem.acquire();
         tasks.push_back(&task);
         sem.release();
     }
 
-    void enqueue(task_t *p_task) noexcept
+    void 
+    enqueue(task_t *p_task) noexcept
     {
         sem.acquire();
         tasks.push_back(p_task);
