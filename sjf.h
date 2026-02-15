@@ -7,8 +7,9 @@
 #include <algorithm>
 #include <unistd.h>
 #include <err.h>
-#include <sys/wait.h>
 #include <sys/types.h>
+#include <signal.h>
+#include <cassert>
 #include "task.h"
 
 namespace sched {
@@ -17,22 +18,17 @@ private:
     void 
     schedule_task(task_t *task) noexcept
     {
+        assert(task->get_state() == task_state::RUNNABLE);
+
         task->set_t_firstrun(hrclock_t::now());
-        switch (task->set_pid(fork())) {
-            case -1:
-                err(EXIT_FAILURE, "fork");
-            case 0:
-                // simulate running for rt_total
-                while (std::chrono::duration_cast<ms_t>(hrclock_t::now() -
-                       task->get_t_firstrun()) < task->get_rt_total())
-                    ;
-                exit(0);
-            default:
-                if (waitpid(task->get_pid(), nullptr, 0) < 0)
-                    err(EXIT_FAILURE, "waitpid");
-                task->set_t_completion(hrclock_t::now());
-                return;
-        }
+        task->run();
+        task->set_state(task_state::RUNNING);
+        
+        std::this_thread::sleep_for(task->get_rt_total());
+        
+        task->set_t_completion(hrclock_t::now());
+        kill(task->get_pid(), SIGKILL);
+        task->set_state(task_state::FINISHED);
     }
     
     [[nodiscard]] size_t 
@@ -43,7 +39,7 @@ private:
                 return t1->get_rt_total() < t2->get_rt_total();
             }) - begin(tasks);
         std::cout << "Scheduling Task " 
-                  << std::to_string(tasks[min_pos]->get_taskid())
+                  << std::to_string(tasks[min_pos]->get_task_id())
                   << ", Runtime: " << tasks[min_pos]->get_rt_total() << '\n';
         return min_pos;
     }

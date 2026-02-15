@@ -3,13 +3,9 @@
 
 #include <cstdint>
 #include <sys/types.h>
+#include <err.h>
 #include <chrono>
-
-using namespace std::literals;
-using hrclock_t     = std::chrono::high_resolution_clock;
-using time_point    = std::chrono::time_point<hrclock_t>;
-using ms_t          = std::chrono::milliseconds;
-using sec_t         = std::chrono::seconds;
+#include "types.h"
 
 enum class task_state {
     NOTREADY    = 0,    // task can not be scheduled yet
@@ -28,23 +24,24 @@ private:
     ms_t        rt_current;   // current accumulated runtime
     ms_t        rt_total;     // total task runtime
     pid_t       pid;          // process id
-    uint8_t     taskid;       // for debugging/print statements
+    u8          task_id;      // for debugging/print statements
     task_state  state;        // current task state
 public:
     // t_firstrun, t_completion, and pid do not require initialization
     // because they will be assigned before they are ever used
-    task_t(ms_t total, uint8_t id) noexcept
+    task_t(ms_t total, u8 id) noexcept
         : t_arrival(hrclock_t::now()), 
           rt_current(0ms), 
           rt_total(total),
-          taskid(id),
-          state(task_state::RUNNABLE) {}
+          task_id(id),
+          state(task_state::RUNNABLE)
+    {}
     
     task_t(const task_t &other)
         : t_arrival(other.t_arrival),
           rt_current(other.rt_current),
           rt_total(other.rt_total),
-          taskid(other.taskid),
+          task_id(other.task_id),
           state(other.state)
     {}
 
@@ -52,7 +49,7 @@ public:
         : t_arrival(std::move(other.t_arrival)),
           rt_current(std::move(other.rt_current)),
           rt_total(other.rt_total),
-          taskid(other.taskid),
+          task_id(other.task_id),
           state(other.state)
     {}
 
@@ -63,7 +60,7 @@ public:
             t_arrival = other.t_arrival;
             rt_current = other.rt_current;
             rt_total = other.rt_total;
-            taskid = other.taskid;
+            task_id = other.task_id;
             state = other.state;
         }
         return *this;
@@ -76,7 +73,7 @@ public:
             t_arrival = std::move(other.t_arrival);
             rt_current = std::move(other.rt_current);
             rt_total = std::move(other.rt_total);
-            taskid = std::move(other.taskid);
+            task_id = std::move(other.task_id);
             state = std::move(other.state);
         }
         return *this;
@@ -94,7 +91,7 @@ public:
         return t_firstrun;
     }
     void
-    set_t_firstrun(time_point firstrun) noexcept
+    set_t_firstrun(time_point firstrun = hrclock_t::now()) noexcept
     { 
         t_firstrun = firstrun;
     }
@@ -105,7 +102,7 @@ public:
         return t_completion;
     }
     void
-    set_t_completion(time_point completion) noexcept
+    set_t_completion(time_point completion = hrclock_t::now()) noexcept
     {
         t_completion = completion;
     }
@@ -113,10 +110,7 @@ public:
     ms_t
     increment_rt_curr(ms_t rt_acc) noexcept
     {
-        if ((rt_current += rt_acc) > rt_total) {
-            rt_current = rt_total;
-            state = task_state::FINISHED;
-        }
+        rt_current += rt_acc;
         return rt_current;
     }
     ms_t
@@ -141,21 +135,17 @@ public:
     { 
         return pid; 
     }
-    
-    // Returning the pid after setting is for the convenience of doing
-    // something like this:
-    // switch (task.set_pid(fork())) {}
-    pid_t
+   
+    void
     set_pid(pid_t new_pid) noexcept 
     { 
         pid = new_pid;
-        return pid;
     }
 
-    uint8_t
-    get_taskid() const noexcept
+    u8
+    get_task_id() const noexcept
     {
-        return taskid;
+        return task_id;
     }
 
     task_state
@@ -167,6 +157,25 @@ public:
     set_state(task_state new_state) noexcept 
     { 
         state = new_state; 
+    }
+    
+    // simulate running the task; calling run() begins simulating the process,
+    // SIGSTOP is used to the deschedule, SIGCONT is used to reschedule, and
+    // SIGKILL should be used when the task is finished
+    void
+    run()
+    {
+        pid = fork();
+        if (pid < 0)
+            err(EXIT_FAILURE, "fork");
+        else if (pid > 0)
+            return;
+        
+        // "simulating" the task is just letting it spin; more specific and 
+        // varied behavior can be implemented here later on to simulate different
+        // and more realistic scheduler workloads
+        while (1)
+            ;
     }
 };
 
