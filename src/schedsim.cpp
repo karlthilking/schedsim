@@ -7,10 +7,10 @@
 #include <utility>
 #include <algorithm>
 #include <fcntl.h>
-#include "types.h"
-#include "task.h"
-#include "sjf.h"
-#include "rr.h"
+#include "../include/types.hpp"
+#include "../include/task.hpp"
+#include "../include/sjf.hpp"
+#include "../include/rr.hpp"
 
 #define OPT_SJF     0x1  // simulate shortest job first
 #define OPT_RR      0x2  // simulate round robin

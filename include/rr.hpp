@@ -9,8 +9,8 @@
 #include <cassert>
 #include <unistd.h>
 #include <signal.h>
-#include "task.h"
-#include "types.h"
+#include "task.hpp"
+#include "types.hpp"
 
 namespace sched {
 class rr {

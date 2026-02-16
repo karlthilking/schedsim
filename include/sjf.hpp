@@ -10,7 +10,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <cassert>
-#include "task.h"
+#include "task.hpp"
 
 namespace sched {
 class sjf {

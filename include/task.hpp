@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include <err.h>
 #include <chrono>
-#include "types.h"
+#include "types.hpp"
 
 enum class task_state {
     NOTREADY    = 0,    // task can not be scheduled yet
