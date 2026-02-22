@@ -23,7 +23,7 @@ private:
     std::vector<std::thread>            threads; // 1 thread = 1 cpu
     std::condition_variable             cv;
     std::mutex                          mtx;
-    milliseconds                        timeslice;
+    milliseconds                        quantum; // i.e. timeslice
     bool                                stop;
 
     void
@@ -35,7 +35,7 @@ private:
             kill(t->get_pid(), SIGCONT);
         t->set_state(task_state::RUNNING);
 
-        std::this_thread::sleep_for(timeslice);
+        std::this_thread::sleep_for(quantum);
         kill(t->get_pid(), SIGSTOP);
 
         int wstat;
@@ -52,7 +52,7 @@ private:
 
 public:
     roundrobin(u32 ncpus = 1, milliseconds timeslice = 24ms) noexcept
-        : timeslice(timeslice), stop(false)
+        : quantum(timeslice), stop(false)
     {
         threads.reserve(ncpus);
         for (u32 cpuid = 0; cpuid < ncpus; ++cpuid) {
@@ -68,8 +68,8 @@ public:
                             return;
                         t = tasks.front().release();
                         tasks.pop();
+                        schedule(task);
                     }
-                    schedule(t);
                 }
             });
         }
