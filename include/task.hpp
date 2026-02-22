@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include "types.hpp"
+#include "random.hpp"
 
 enum class task_state { 
     RUNNABLE,
@@ -91,14 +92,13 @@ public:
         
         std::array<std::array<float, 16>, 16> A;
         std::array<std::array<float, 16>, 16> B;
-        {
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::uniform_real_distribution<> dist(-1024.0f, 1024.0f);
-
-            std::generate(begin(A), end(A), [&]{ return dist(gen); });
-            std::generate(begin(B), end(B), [&]{ return dist(gen); });
-        }
+        
+        std::generate(begin(A), end(A), [&]{
+            return generator::rand<float>(-1024.0f, 1024.0f);
+        });
+        std::generate(begin(B), end(B), [&]{
+            return generator::rand<float>(-1024.0f, 1024.0f);
+        });
         
         int N = 4096;
         while (N--) {
@@ -134,10 +134,10 @@ public:
 
         int N = 4096;
         while (N--) {
-            std::string &s1 = v[dist(gen)];
-            std::string &s2 = v[dist(gen)];
-            s1 += s2[0];
-            s2 += s1[0];
+            size_t i1 = generator::rand<size_t>(0, 4095);
+            size_t i2 = generator::rand<size_t>(0, 4095);
+            std::string s1 = v[i1];
+            std::string s2 = v[i2];
         }
         exit(0);
     }
