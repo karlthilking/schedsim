@@ -6,6 +6,7 @@
 #include <err.h>
 #include <chrono>
 #include <unistd.h>
+#include <sys/time.h>
 #include "types.hpp"
 
 enum class task_state { 
@@ -16,23 +17,39 @@ enum class task_state {
 };
 
 class task {
-protected:
-    pid_t       pid;
-    task_state  state;
 public:
-    task_t() : pid(0), state(task_state::RUNNABLE) {}
+    struct rusage   ru; // task resource usage
+protected:
+    pid_t           pid;
+    u32             task_id;
+    task_state      state;
+public:
+    task_t(u32 id) : pid(0), task_id(id), state(task_state::RUNNABLE)
+    {
+        if (timerisset(&ru.ru_utime)) {
+            ru.ru_utime.tv_sec = 0;
+            ru.ru_utime.tv_usec = 0;
+        } else if (timerisset(&ru.ru_stime)) {
+            ru.ru_stime.tv_sec = 0;
+            ru.ru_stime.tv_usec = 0;
+        }
+    }
     
     task_t(const task_t &_) = delete;
     task_t &operator=(const task_t &_) = delete;
 
     task_t(task_t &&other) noexcept
-        : pid(std::move(other.pid)), 
+        : ru(std::move(other.ru)),
+          pid(std::move(other.pid)),
+          task_id(std::move(other.task_id)),
           state(std::move(other.state))
     {}
 
     task_t &operator=(task_t &&other) noexcept
     {
-        pid = std::exchange(other.pid, 0);
+        ru = std::move(other.ru);
+        pid = std::move(other.pid);
+        task_id = std::move(other.task_id);
         state = std::move(other.state);
     }
 
@@ -46,11 +63,23 @@ public:
 
     pid_t
     get_pid() const noexcept { return pid; }
+
+    u32
+    get_task_id() const noexcept { return task_id; }
+
+    u32
+    get_ms_runtime() const noexcept
+    {
+        return (ru.ru_utime.tv_sec * 1000) + (ru.ru_stime.tv_sec * 1000)
+           + (ru.ru_utime.tv_usec / 1000) + (ru.ru_stime.tv_usec / 1000);
+    }
 };
 
 /* cpu bound task */
 class cpu_task : public task {
 public:
+    cpu_task(u32 id) : task(id) {}
+
     virtual void
     run() override
     {
@@ -86,6 +115,8 @@ public:
 /* memory bound task */
 class mem_task : public task {
 public:
+    mem_task(u32 id) : task(id) {}
+
     virtual void
     run() override
     {
