@@ -5,165 +5,54 @@
 #include <sys/types.h>
 #include <err.h>
 #include <chrono>
+#include <unistd.h>
 #include "types.hpp"
 
-enum class task_state {
-    NOTREADY    = 0,    // task can not be scheduled yet
-    SLEEPING    = 1,    // task is sleeping (performing I/O)
-    BLOCKED     = 2,    // task is blocked (descheduled/evicted)
-    RUNNABLE    = 3,    // task is runnable
-    RUNNING     = 4,    // task is running
-    FINISHED    = 5     // task exited
+enum class task_state { 
+    RUNNABLE,
+    RUNNING,
+    STOPPED,
+    FINISHED
 };
 
-class task_t {
-private:
-    time_point  t_arrival;    // time of arrival
-    time_point  t_firstrun;   // time of first run
-    time_point  t_completion; // time of completion
-    ms_t        rt_current;   // current accumulated runtime
-    ms_t        rt_total;     // total task runtime
-    pid_t       pid;          // process id
-    u8          task_id;      // for debugging/print statements
-    task_state  state;        // current task state
+class task {
+protected:
+    pid_t       pid;
+    task_state  state;
 public:
-    // t_firstrun, t_completion, and pid do not require initialization
-    // because they will be assigned before they are ever used
-    task_t(ms_t total, u8 id) noexcept
-        : t_arrival(hrclock_t::now()), 
-          rt_current(0ms), 
-          rt_total(total),
-          task_id(id),
-          state(task_state::RUNNABLE)
-    {}
+    task_t() : pid(0), state(task_state::RUNNABLE) {}
     
-    task_t(const task_t &other)
-        : t_arrival(other.t_arrival),
-          rt_current(other.rt_current),
-          rt_total(other.rt_total),
-          task_id(other.task_id),
-          state(other.state)
-    {}
+    task_t(const task_t &_) = delete;
+    task_t &operator=(const task_t &_) = delete;
 
     task_t(task_t &&other) noexcept
-        : t_arrival(std::move(other.t_arrival)),
-          rt_current(std::move(other.rt_current)),
-          rt_total(other.rt_total),
-          task_id(other.task_id),
-          state(other.state)
+        : pid(std::move(other.pid)), 
+          state(std::move(other.state))
     {}
 
-    task_t &
-    operator=(const task_t &other) 
+    task_t &operator=(task_t &&other) noexcept
     {
-        if (this != &other) {
-            t_arrival = other.t_arrival;
-            rt_current = other.rt_current;
-            rt_total = other.rt_total;
-            task_id = other.task_id;
-            state = other.state;
-        }
-        return *this;
+        pid = std::exchange(other.pid, 0);
+        state = std::move(other.state);
     }
 
-    task_t &
-    operator=(task_t &&other) noexcept
-    {
-        if (this != &other) {
-            t_arrival = std::move(other.t_arrival);
-            rt_current = std::move(other.rt_current);
-            rt_total = std::move(other.rt_total);
-            task_id = std::move(other.task_id);
-            state = std::move(other.state);
-        }
-        return *this;
-    }
-    
-    time_point 
-    get_t_arrival() const noexcept 
-    { 
-        return t_arrival; 
-    }
-    
-    time_point
-    get_t_firstrun() const noexcept
-    {
-        return t_firstrun;
-    }
-    void
-    set_t_firstrun(time_point firstrun = hrclock_t::now()) noexcept
-    { 
-        t_firstrun = firstrun;
-    }
-    
-    time_point
-    get_t_completion() const noexcept
-    {
-        return t_completion;
-    }
-    void
-    set_t_completion(time_point completion = hrclock_t::now()) noexcept
-    {
-        t_completion = completion;
-    }
+    virtual void run() = 0;
 
-    ms_t
-    increment_rt_curr(ms_t rt_acc) noexcept
-    {
-        rt_current += rt_acc;
-        return rt_current;
-    }
-    ms_t
-    get_rt_curr() const noexcept
-    {
-        return rt_current;
-    }
-    ms_t
-    get_rt_remaining() const noexcept
-    {
-        return rt_total - rt_current;
-    }
+    task_state 
+    get_state() const noexcept { return state; }
 
-    ms_t
-    get_rt_total() const noexcept 
-    { 
-        return rt_total; 
-    }
+    task_state 
+    set_state(task_state new_state) noexcept { state = new_state; }
 
     pid_t
-    get_pid() const noexcept 
-    { 
-        return pid; 
-    }
-   
-    void
-    set_pid(pid_t new_pid) noexcept 
-    { 
-        pid = new_pid;
-    }
+    get_pid() const noexcept { return pid; }
+};
 
-    u8
-    get_task_id() const noexcept
-    {
-        return task_id;
-    }
-
-    task_state
-    get_state() const noexcept 
-    { 
-        return state; 
-    }
-    void
-    set_state(task_state new_state) noexcept 
-    { 
-        state = new_state; 
-    }
-    
-    // simulate running the task; calling run() begins simulating the process,
-    // SIGSTOP is used to the deschedule, SIGCONT is used to reschedule, and
-    // SIGKILL should be used when the task is finished
-    void
-    run()
+/* cpu bound task */
+class cpu_task : public task {
+public:
+    virtual void
+    run() override
     {
         pid = fork();
         if (pid < 0)
@@ -171,13 +60,55 @@ public:
         else if (pid > 0)
             return;
         
-        // "simulating" the task is just letting it spin; more specific and 
-        // varied behavior can be implemented here later on to simulate different
-        // and more realistic scheduler workloads
-        while (1)
-            ;
+        std::array<std::array<float, 16>, 16> A;
+        std::array<std::array<float, 16>, 16> B;
+        {
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<> dist(-1024.0f, 1024.0f);
+
+            std::generate(begin(A), end(A), [&]{ return dist(gen); });
+            std::generate(begin(B), end(B), [&]{ return dist(gen); });
+        }
+        
+        int N = 4096;
+        while (N--) {
+            std::array<std::array<float, 16>, 16> C{};
+            for (int i = 0; i < 16; ++i)
+                for (int k = 0; k < 16; ++k)
+                    for (int j = 0; j < 16; ++j)
+                        C[i][j] += A[i][k] * B[k][j];
+        }
+        exit(0);
+    }
+}; 
+
+/* memory bound task */
+class mem_task : public task {
+public:
+    virtual void
+    run() override
+    {
+        pid = fork();
+        if (pid < 0)
+            err(EXIT_FAILURE, "fork");
+        else if (pid > 0)
+            return;
+        
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dist(0, 4096);
+        
+        std::vector<std::string> v(4096, "01010");
+
+        int N = 4096;
+        while (N--) {
+            std::string &s1 = v[dist(gen)];
+            std::string &s2 = v[dist(gen)];
+            s1 += s2[0];
+            s2 += s1[0];
+        }
+        exit(0);
     }
 };
-
-#endif
 

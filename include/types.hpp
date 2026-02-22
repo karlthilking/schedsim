@@ -6,13 +6,8 @@
 
 // for literal time quantites e.g. 10ms
 using namespace std::literals;
-
-// std::chrono time library aliases
-using hrclock_t     = std::chrono::high_resolution_clock;
-using time_point    = std::chrono::time_point<hrclock_t>;
-using sec_t         = std::chrono::seconds;
-using ms_t          = std::chrono::milliseconds;
-using us_t          = std::chrono::microseconds;
+// for high_resolution_clock, duration_cast, etc
+using namespace std::chrono;
 
 // integer type aliases
 using i8    = int8_t;
