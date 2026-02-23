@@ -7,6 +7,7 @@
 #include <chrono>
 #include <unistd.h>
 #include <sys/time.h>
+#include <cstring>
 #include "types.hpp"
 #include "random.hpp"
 
@@ -110,8 +111,14 @@ public:
     u32
     get_task_id() const noexcept { return task_id; }
 
-    struct rusage *
-    get_rusage() const noexcept { return ru; }
+    struct rusage &
+    get_rusage() const noexcept { return *ru; }
+    
+    void
+    set_rusage(struct rusage &new_ru) noexcept
+    {
+        memcpy((void *)ru, (void *)&new_ru, sizeof(*ru));
+    }
 
     milliseconds
     get_t_turnaround() const noexcept
