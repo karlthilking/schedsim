@@ -4,10 +4,9 @@
 #include <chrono>
 #include <cstdint>
 
-// for literal time quantites e.g. 10ms
-using namespace std::literals;
-// for high_resolution_clock, duration_cast, etc
+// for high_resolution_clock, duration_cast, literal time quantities, etc.
 using namespace std::chrono;
+using time_point = time_point<high_resolution_clock>;
 
 // integer type aliases
 using i8    = int8_t;

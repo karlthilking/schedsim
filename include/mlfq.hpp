@@ -6,12 +6,13 @@ template<size_t N>  // N = number of queues
 class mlfq {
 private:
     std::array<std::queue<std::unique_ptr<task>>, N> tasks;
-    std::vector<std::thread> threads;
-    std::condition_variable cv;
-    std::array<std::mutex, N> locks;
-    u32 ntasks;
-    milliseconds timeslice;
-    bool stop;
+    std::vector<std::thread>                         threads;
+    std::condition_variable                          cv;
+    std::array<std::mutex, N>                        locks;
+    milliseconds                                     timeslice;
+    u32                                              ntasks;
+    bool                                             stop;
+    bool                                             pause;
     
     /*  
      *  Get the user and system CPU usage difference beetween
@@ -38,11 +39,13 @@ private:
      *  timeslice, determine at which queue level to reinsert the task
      */
     void
-    schedule(task *t) noexcept
+    schedule(task *t, u32 level) noexcept
     {
-        assert(t->get_state() != task_state::RUNNING);
+        assert(t->get_state() != task_state::RUNNING ||
+               t->get_state() != task_state::FINISHED);
 
-        struct rusage prevru = t->ru;
+        struct rusage prev_ru = t->ru;
+        struct rusage cur_ru;
         if (t->get_state() == task_state::RUNNABLE)
             t->run();
         else if (t->get_state() == task_state::STOPPED)
@@ -53,7 +56,7 @@ private:
         kill(t->get_pid(), SIGSTOP);
 
         int rc, wstat;
-        if ((rc = wait4(t->get_pid(), &wstat, 0, &t->ru)) < 0)
+        if ((rc = wait4(t->get_pid(), &wstat, 0, &cur_ru)) < 0)
             err(EXIT_FAILURE, "wait4");
         else if (rc == 0)
             err(EXIT_FAILURE, "child state did not change");
@@ -64,17 +67,21 @@ private:
                       << WEXITSTATUS(wstat) << '\n';
         } else if (WIFSTOPPED(wstat)) {
             t->set_state(task_state::STOPPED);
-            if (get_ms_diff(prevru, t->ru) >= timeslice) {
-                // demote queue level and insert there
+            if (get_ms_diff(prev_ru, cur_ru) >= timeslice) {
+                /* demote queue level and insert there */
+                t->ru = cur_ru;
+                enqueue(t, level - 1);
             } else {
-                // keep on the same queue level
+                /* keep on the same queue level */
+                enqueue(t, level);
             }
         }
         return;
     }
 
 public:
-    mlfq(u32 ncpus = 1, milliseconds timeslice = 24ms) noexcept
+    mlfq(u32 ncpus = 1, milliseconds timeslice = 24ms,
+         seconds prio_boost_freq = 1s) noexcept
         : timeslice(timeslice), stop(false), ntasks(0)
     {
         threads.reserve(ncpus);
@@ -82,11 +89,11 @@ public:
             threads.emplace_back([this]{
                 while (true) {
                     task *t;
-                    // qid = which queue to search
-                    for (u32 level = 0; level < N; ++level) {
-                        std::lock_guard<std::mutex> lock(mtx);
+                    u32 level;
+                    for (level = 0; level < N; ++level) {
+                        std::lock_guard<std::mutex> lock(locks[level]);
                         cv.wait(lock, [this]{
-                            return stop || ntasks > 0;
+                            return (stop || ntasks > 0) && !pause;
                         });
                         if (tasks[level].empty()) {
                             if (stop && ntasks == 0)
@@ -98,15 +105,32 @@ public:
                         --ntasks;
                         break;
                     }
-                    schedule(t);
+                    schedule(t, level);
                 }
             });
         }
+        /* priority boost thread */
+        threads.emplace_back([this]{
+            do {
+                std::this_thread::sleep_for(prio_boost_freq);
+                pause = true;
+                for (u32 level = 1; level < N; ++level) {
+                    std::scoped_lock lock(locks[0], locks[level]);
+                    while (!tasks[level].empty()) {
+                        tasks[0].push(std::move(tasks[level].front()));
+                        tasks[level].pop();
+                    }
+                }
+                pause = false;
+                cv.notify_all();
+            } while (!stop);
+        });
     }
     
     ~mlfq() noexcept
     {
         stop = true;
+        cv.notify_all();
         for (std::thread &thrd : threads)
             thrd.join();
     }
@@ -121,27 +145,30 @@ public:
     void
     enqueue(task *t, u32 level = 0) noexcept
     {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(locks[level]);
         tasks[level].emplace(t);
         ++ntasks;
+        cv.notify(locks[level]);
     }
 
     template<typename T>
     void
     enqueue(T &&t, u32 level = 0) noexcept
     {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(locks[level]);
         tasks[level].push(std::make_unique<task>(std::forward<T>(task)));
         ++ntasks;
+        cv.notify(locks[level]);
     }
     
     template<typename T, typename ...Args>
     void
     enqueue(Args &&...args) noexcept
     {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(locks[0]);
         tasks[0].emplace(new T(std::foward<Args>(args)...));
         ++ntasks;
+        cv.notify(locks[0]);
     }
 };
 } // namespace scheduler

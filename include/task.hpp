@@ -17,41 +17,83 @@ enum class task_state {
     FINISHED
 };
 
+struct task_stat {
+    time_point      t_start;
+    time_point      t_firstrun;
+    time_point      t_completion;
+    time_point      t_laststop;
+    milliseconds    waittime;
+
+    task_stat() noexcept : t_start(high_resolution_clock::now()) {}
+
+    milliseconds 
+    get_t_turnaround() const noexcept
+    {
+        return t_completion - t_start;
+    }
+    milliseconds 
+    get_t_response() const noexcept
+    {
+        return t_firstrun - t_start;
+    }
+    float 
+    get_total_waittime() const noexcept
+    {
+        return waittime + get_t_response();
+    }
+};
+
 class task {
-public:
-    struct rusage   ru; // task resource usage
 protected:
+    struct rusage   *ru;
+    task_stat       *stat;
     pid_t           pid;
     u32             task_id;
     task_state      state;
 public:
-    task_t(u32 id) : pid(0), task_id(id), state(task_state::RUNNABLE)
+    task(u32 id) noexcept
+        : ru(new struct rusage()),
+          stat(new task_stat()),
+          pid(0), 
+          task_id(id), 
+          state(task_state::RUNNABLE)
     {
-        if (timerisset(&ru.ru_utime)) {
+        if (timerisset(&ru->ru_utime)) {
             ru.ru_utime.tv_sec = 0;
             ru.ru_utime.tv_usec = 0;
-        } else if (timerisset(&ru.ru_stime)) {
+        } else if (timerisset(&ru->ru_stime)) {
             ru.ru_stime.tv_sec = 0;
             ru.ru_stime.tv_usec = 0;
         }
     }
-    
-    task_t(const task_t &_) = delete;
-    task_t &operator=(const task_t &_) = delete;
 
-    task_t(task_t &&other) noexcept
+    ~task() noexcept
+    {
+        delete ru;
+        delete stat;
+    }
+    
+    task(const task_t &_) = delete;
+    task &operator=(const task_t &_) = delete;
+
+    task(task_t &&other) noexcept
         : ru(std::move(other.ru)),
+          stat(std::move(other.stat)),
           pid(std::move(other.pid)),
           task_id(std::move(other.task_id)),
           state(std::move(other.state))
     {}
 
-    task_t &operator=(task_t &&other) noexcept
+    task &operator=(task_t &&other) noexcept
     {
-        ru = std::move(other.ru);
-        pid = std::move(other.pid);
-        task_id = std::move(other.task_id);
-        state = std::move(other.state);
+        if (this != &other) {
+            ru = std::move(other.ru);
+            stat = std::move(other.stat),
+            pid = std::move(other.pid);
+            task_id = std::move(other.task_id);
+            state = std::move(other.state);
+        }
+        return this;
     }
 
     virtual void run() = 0;
@@ -68,11 +110,47 @@ public:
     u32
     get_task_id() const noexcept { return task_id; }
 
-    u32
-    get_ms_runtime() const noexcept
+    struct rusage *
+    get_rusage() const noexcept { return ru; }
+
+    milliseconds
+    get_t_turnaround() const noexcept
     {
-        return (ru.ru_utime.tv_sec * 1000) + (ru.ru_stime.tv_sec * 1000)
-           + (ru.ru_utime.tv_usec / 1000) + (ru.ru_stime.tv_usec / 1000);
+        assert(state = task_state::FINISHED);
+        return stat->get_t_turnaround(); 
+    }
+    milliseconds
+    get_t_response() const noexcept
+    {
+        assert(state == task_state::FINISHED);
+        return stat->get_t_response(); 
+    }
+    milliseconds
+    get_total_waittime() const noexcept
+    {
+        assert(state == task_state::FINISHED);
+        return stat->get_total_waittime();
+    }
+
+    void
+    set_t_completion(time_point t_completion) noexcept
+    {
+        stat->t_completion = t_completion;
+    }
+    void
+    set_t_firstrun(time_point t_firstrun) noexcept
+    {
+        stat->t_firstrun = t_firstrun;
+    }
+    void 
+    set_t_laststop(time_point stop_time) noexcept
+    {
+        stat->t_laststop = stop_time;
+    }
+    void
+    increment_waittime(time_point start_time) noexcept
+    {
+        stat->waittime += (start_time - stat->last_stop);
     }
 };
 
@@ -136,10 +214,9 @@ public:
         while (N--) {
             size_t i1 = generator::rand<size_t>(0, 4095);
             size_t i2 = generator::rand<size_t>(0, 4095);
-            std::string s1 = v[i1];
-            std::string s2 = v[i2];
+            [[maybe_unused]] std::string s1 = v[i1];
+            [[maybe_unused]] std::string s2 = v[i2];
         }
         exit(0);
     }
 };
-
