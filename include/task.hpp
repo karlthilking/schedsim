@@ -19,25 +19,28 @@ enum class task_state {
 };
 
 struct task_stat {
-    time_point      t_start;
-    time_point      t_firstrun;
-    time_point      t_completion;
-    time_point      t_laststop;
-    milliseconds    waittime;
+    time_point<high_resolution_clock>   t_start;
+    time_point<high_resolution_clock>   t_firstrun;
+    time_point<high_resolution_clock>   t_completion;
+    time_point<high_resolution_clock>   t_laststop;
+    milliseconds                        waittime;
 
-    task_stat() noexcept : t_start(high_resolution_clock::now()) {}
+    task_stat() noexcept
+        : t_start(high_resolution_clock::now()),
+          waittime(milliseconds(0))
+    {}
 
     milliseconds 
     get_t_turnaround() const noexcept
     {
-        return t_completion - t_start;
+        return duration_cast<milliseconds>(t_completion - t_start);
     }
     milliseconds 
     get_t_response() const noexcept
     {
-        return t_firstrun - t_start;
+        return duration_cast<milliseconds>(t_firstrun - t_start);
     }
-    float 
+    milliseconds 
     get_total_waittime() const noexcept
     {
         return waittime + get_t_response();
@@ -59,6 +62,7 @@ public:
           task_id(id), 
           state(task_state::RUNNABLE)
     {
+        stat->t_start = high_resolution_clock::now();
         if (timerisset(&ru->ru_utime)) {
             ru.ru_utime.tv_sec = 0;
             ru.ru_utime.tv_usec = 0;
@@ -111,7 +115,7 @@ public:
     u32
     get_task_id() const noexcept { return task_id; }
 
-    struct rusage &
+    const struct rusage &
     get_rusage() const noexcept { return *ru; }
     
     void
@@ -119,11 +123,17 @@ public:
     {
         memcpy((void *)ru, (void *)&new_ru, sizeof(*ru));
     }
+    
+    time_point<high_resolution_clock>
+    get_t_start() const noexcept
+    {
+        return stat->t_start;
+    }
 
     milliseconds
     get_t_turnaround() const noexcept
     {
-        assert(state = task_state::FINISHED);
+        assert(state == task_state::FINISHED);
         return stat->get_t_turnaround(); 
     }
     milliseconds
@@ -135,7 +145,6 @@ public:
     milliseconds
     get_total_waittime() const noexcept
     {
-        assert(state == task_state::FINISHED);
         return stat->get_total_waittime();
     }
 
@@ -211,12 +220,7 @@ public:
         else if (pid > 0)
             return;
         
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<> dist(0, 4096);
-        
         std::vector<std::string> v(4096, "01010");
-
         int N = 4096;
         while (N--) {
             size_t i1 = generator::rand<size_t>(0, 4095);

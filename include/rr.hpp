@@ -16,15 +16,20 @@
 #include "task.hpp"
 #include "types.hpp"
 
+#define STOP_FLAG   0x1
+#define HALT_FLAG   0x2
+#define STOP(flag)  ((flag) & STOP_FLAG)
+#define HALT(flag)  ((flag) & HALT_FLAG)
+
 namespace scheduler {
 class roundrobin {
 private:
-    std::queue<std::unique_ptr<task>>   tasks;
-    std::vector<std::thread>            threads; // 1 thread = 1 cpu
-    std::condition_variable             cv;
-    std::mutex                          mtx;
-    milliseconds                        timeslice;
-    bool                                stop;
+    std::queue<task *>          tasks;
+    std::vector<std::thread>    threads; // 1 thread = 1 cpu
+    std::condition_variable     cv;
+    std::mutex                  mtx;
+    milliseconds                timeslice;
+    u8                          flag;
 
     void
     schedule(task *t) noexcept
@@ -52,7 +57,7 @@ private:
 
 public:
     roundrobin(u32 ncpus = 1, milliseconds timeslice = 24ms) noexcept
-        : timeslice(timeslice), stop(false)
+        : timeslice(timeslice), flag(0)
     {
         threads.reserve(ncpus);
         for (u32 cpuid = 0; cpuid < ncpus; ++cpuid) {
@@ -62,11 +67,12 @@ public:
                     {
                         std::unique_lock<std::mutex> lock(mtx);
                         cv.wait(lock, [this] {
-                            return !tasks.empty() || stop
+                            return STOP(flag) || HALT(flag) ||
+                                   !(tasks.empty());
                         });
-                        if (stop && tasks.empty())
+                        if (HALT(flag) || (STOP(flag) && tasks.empty()))
                             return;
-                        t = tasks.front().release();
+                        t = tasks.front();
                         tasks.pop();
                     }
                     schedule(t);
@@ -77,7 +83,17 @@ public:
 
     ~roundrobin() noexcept
     {
-        stop = true;
+        flag |= STOP_FLAG;
+        cv.notify_all();
+        for (std::thread &thrd : threads)
+            thrd.join();
+    }
+
+    void
+    halt() noexcept
+    {
+        flag = HALT_FLAG;
+        cv.notify_all();
         for (std::thread &thrd : threads)
             thrd.join();
     }
@@ -86,7 +102,8 @@ public:
     enqueue(task *t) noexcept
     {
         std::lock_guard<std::mutex> lock(mtx);
-        tasks.emplace(t);
+        tasks.push(t);
+        cv.notify_one();
     }
 
     template<typename T>
@@ -94,7 +111,8 @@ public:
     enqueue(T &&t) noexcept
     {
         std::lock_guard<std::mutex> lock(mtx);
-        tasks.push(std::make_unique<task>(std::forward<T>(t)));
+        tasks.push(new task(t));
+        cv.notify_one();
     }
 
     template<typename T, typename ...Args>
@@ -102,7 +120,8 @@ public:
     enqueue(Args &&...args) noexcept
     {
         std::lock_guard<std::mutex> lock(mtx);
-        tasks.emplace(new T(std::forward<Args>(args)...));
+        tasks.push(new task(std::forward<Args>(args)...));
+        cv.notify_one();
     }
 };
 } // namespace scheduler
