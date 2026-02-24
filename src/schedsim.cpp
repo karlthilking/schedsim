@@ -3,6 +3,7 @@
 #include <random>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <thread>
 #include <chrono>
 #include <utility>
@@ -51,20 +52,35 @@ show_stats(const std::vector<task *> &tasks,
 
     u32 nfinished = 0;
     u32 nstarted = 0;
+    u32 ncpu_tasks = 0;
+    u32 nmem_tasks = 0;
     milliseconds avg_t_turnaround = 0ms;
     milliseconds avg_t_response = 0ms;
     milliseconds avg_t_waiting = 0ms;
     milliseconds avg_t_running = 0ms;
+    milliseconds avg_rt_cpu = 0ms;
+    milliseconds avg_rt_mem = 0ms;
     seconds t_total = duration_cast<seconds>(t_now - t_start);
     float cpu_utilization = 0.0f;
     float throughput = 0.0f;
     float pct_finished = 0.0f;
-    std::for_each(begin(tasks), end(tasks), [&](const task *t){
+    std::for_each(begin(tasks), end(tasks), [&](task *t){
         /* task never started */
         if (t->get_state() == task_state::RUNNABLE)
             return;
         else if (t->get_state() == task_state::FINISHED) {
-            avg_t_running += (t->get_t_turnaround() - t->get_total_waittime());
+            auto t_running = t->get_t_turnaround() - t->get_total_waittime();
+            try {
+                [[maybe_unused]] cpu_task &ct = dynamic_cast<cpu_task &>(*t);
+                avg_rt_cpu += t_running;
+                ++ncpu_tasks;
+            } catch (const std::exception &e) {}
+            try {
+                [[maybe_unused]] mem_task &mt = dynamic_cast<mem_task &>(*t);
+                avg_rt_mem += t_running;
+                ++nmem_tasks;
+            } catch (const std::exception &e) {}
+            avg_t_running += t_running;
             avg_t_turnaround += t->get_t_turnaround();
             float t_utilized = (t->get_t_turnaround().count() - 
                                 t->get_total_waittime().count());
@@ -84,20 +100,26 @@ show_stats(const std::vector<task *> &tasks,
     avg_t_turnaround /= nfinished;
     avg_t_response /= nstarted;
     avg_t_waiting /= nstarted;
+    avg_rt_cpu /= ncpu_tasks;
+    avg_rt_mem /= nmem_tasks;
     cpu_utilization /= duration_cast<milliseconds>(t_now - t_start).count();
     cpu_utilization /= ncpus;
     throughput /= duration_cast<seconds>(t_now - t_start).count();
     pct_finished = 
         (static_cast<float>(nfinished) / static_cast<float>(nstarted)) * 100;
     std::cout << std::setprecision(4)
-              << "Percent Tasks Finished:\t\t" << pct_finished << "%\n"
-              << "Total Runtime:\t\t\t" << t_total.count() << "s\n"
-              << "Average Task Runtime:\t\t" << avg_t_running.count()
-              << "ms\nAverage Turnaround Time:\t" << avg_t_turnaround.count()
-              << "ms\nAverage Response Time:\t\t" << avg_t_response.count()
-              << "ms\nAverage Wait Time:\t\t" << avg_t_waiting.count()
-              << "ms\nCPU Utilization:\t\t" << (cpu_utilization * 100) << '%'
-              << "\nThroughput:\t\t\t" << throughput << " (tasks/sec)\n";
+              << "Percent Tasks Finished:\t\t\t" << pct_finished << "%\n"
+              << "Total Runtime:\t\t\t\t" << t_total.count() << "s\n"
+              << "Average Task Runtime:\t\t\t" << avg_t_running.count()
+              << "ms\nAverage CPU Bound Task Runtime:\t\t" 
+              << avg_rt_cpu.count() << "ms\n"
+              << "Average Memory Bound Task Runtime:\t"
+              << avg_rt_mem.count() << "ms\n"
+              << "Average Turnaround Time:\t\t" << avg_t_turnaround.count()
+              << "ms\nAverage Response Time:\t\t\t" << avg_t_response.count()
+              << "ms\nAverage Wait Time:\t\t\t" << avg_t_waiting.count()
+              << "ms\nCPU Utilization:\t\t\t" << (cpu_utilization * 100) 
+              << "%\nThroughput:\t\t\t\t" << throughput << " (tasks/sec)\n";
 }
 
 int 
@@ -111,7 +133,7 @@ main(int argc, char *argv[])
     u32 ncpus = 1;
     std::size_t nlevels = 4;
     milliseconds timeslice = 24ms;
-    seconds runtime = 10s;
+    seconds runtime = 30s;
     for (int i = 1; i < argc; ++i) {
         if (!strncmp(argv[i], "-s=rr", 5))
             opt |= S_RR;
@@ -150,23 +172,21 @@ main(int argc, char *argv[])
         time_point<high_resolution_clock> t, t_start, t_end;
         
         scheduler::mlfq mlfq(ncpus, timeslice, nlevels);
-        u32 id = 0;
         t_start = high_resolution_clock::now();
         t_end = t_start + runtime;
-        for (t = t_start; t < t_end; t = high_resolution_clock::now()) {
-            if (generator::rand<int>(0, 1))
-                tasks.emplace_back(new cpu_task(id++));
-            else
-                tasks.emplace_back(new mem_task(id++));
-            std::cout << "(Task " << tasks.back()->get_task_id()
-                      << ") spawned\n";
-            mlfq.enqueue(tasks.back());
-            if (generator::rand<int>(0, 3))
+        {
+            scheduler::mlfq mlfq(ncpus, timeslice, nlevels);
+            for (u32 id = 0; high_resolution_clock::now() < t_end; ++id) {
+                if (generator::rand<int>(0, 10) > 5)
+                    tasks.emplace_back(new cpu_task(id));
+                else
+                    tasks.emplace_back(new mem_task(id));
+                mlfq.enqueue(tasks[id]);
                 std::this_thread::sleep_for(
-                    milliseconds(generator::rand<int>(250, 750))
+                    milliseconds(generator::rand<int>(250, 600))
                 );
+            }
         }
-        mlfq.halt();
         std::cout << "\nSimulation exited\n\n";
         
         show_stats(tasks, t_start, ncpus);

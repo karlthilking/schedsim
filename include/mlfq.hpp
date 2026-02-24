@@ -29,6 +29,7 @@ private:
     std::vector<std::thread>                threads;
     std::vector<std::condition_variable>    conds;
     std::vector<std::mutex>                 locks;
+    std::mutex                              stdout_mtx;
     milliseconds                            timeslice;
     std::atomic<u8>                         flag;
     
@@ -68,6 +69,10 @@ private:
         struct rusage cur_ru;
 
         if (t->get_state() == task_state::RUNNABLE) {
+            {
+                std::lock_guard<std::mutex> lk(stdout_mtx);
+                std::cout << *t << " started\n";
+            }
             t->set_t_firstrun(high_resolution_clock::now());
             t->run();
         } else if (t->get_state() == task_state::STOPPED) {
@@ -90,9 +95,11 @@ private:
             assert(WEXITSTATUS(wstat) == 0);
             t->set_state(task_state::FINISHED);
             t->set_t_completion(high_resolution_clock::now());
-            std::cout << "(Task " << t->get_task_id() << ", PID: "
-                      << t->get_pid() << ") exited with exit code "
+            {
+                std::lock_guard<std::mutex> lk(stdout_mtx);
+                std::cout << *t << " exited with exit code "
                       << WEXITSTATUS(wstat) << '\n';
+            }
         } else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) == SIGSTOP) {
             t->set_state(task_state::STOPPED);
             t->set_t_laststop(high_resolution_clock::now());
@@ -152,31 +159,31 @@ public:
                     if (t && MLFQ_PRIO(flag))
                         enqueue(t, 0);
                     else if (t)
-                            schedule(t, lvl);
+                        schedule(t, lvl);
                 }
             });
         }
         /* priority boost thread */
         threads.emplace_back([&]{
                 do {
-                {
-                    std::unique_lock<std::mutex> lk(locks[0]);
-                    conds[0].wait_for(lk, prio_boost_freq, [&]{
-                        return MLFQ_STOP(flag) || MLFQ_HALT(flag);
-                    });
-                }
-                if (MLFQ_STOP(flag) || MLFQ_HALT(flag))
-                    return;
-                flag.fetch_or(MLFQ_PRIO_FLAG);
-                for (u32 lvl = 1; lvl < tasks.size(); ++lvl) {
                     {
-                        std::unique_lock<std::mutex> lk(locks[lvl]);
-                        if (tasks[lvl].empty())
-                            continue;
-                        conds[lvl].notify_all();
+                        std::unique_lock<std::mutex> lk(locks[0]);
+                        conds[0].wait_for(lk, prio_boost_freq, [&]{
+                            return MLFQ_STOP(flag) || MLFQ_HALT(flag);
+                        });
                     }
-                }
-                flag.fetch_xor(MLFQ_PRIO_FLAG);
+                    if (MLFQ_STOP(flag) || MLFQ_HALT(flag))
+                        return;
+                    flag.fetch_or(MLFQ_PRIO_FLAG);
+                    for (u32 lvl = 1; lvl < tasks.size(); ++lvl) {
+                        {
+                            std::unique_lock<std::mutex> lk(locks[lvl]);
+                            if (tasks[lvl].empty())
+                                continue;
+                            conds[lvl].notify_all();
+                        }
+                    }
+                    flag.fetch_xor(MLFQ_PRIO_FLAG);
             } while (1);    
         });
     }
@@ -263,6 +270,26 @@ public:
             tasks[lvl].push(*it);
         conds[lvl].notify_all();
     }
+
+    friend std::ostream &
+    operator<<(std::ostream &os, mlfq &mlfq_sched);
 };
+
+std::ostream &
+operator<<(std::ostream &os, mlfq &mlfq_sched)
+{
+    std::lock_guard<std::mutex> lk(mlfq_sched.stdout_mtx);
+    for (u32 lvl = 0; lvl < mlfq_sched.tasks.size(); ++lvl) {
+        std::queue<task *> q = mlfq_sched.tasks[lvl];
+        os << "MLFQ (Level " << lvl + 1 << "): ";
+        while (!q.empty()) {
+            os << *q.front() << ' ';
+            q.pop();
+        }
+        os << '\n';
+    }
+    return os;
+}
+
 } // namespace scheduler
 #endif

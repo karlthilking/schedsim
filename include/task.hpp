@@ -150,7 +150,24 @@ public:
             start_time - stat->t_laststop
         );
     }
+    
+    friend std::ostream & 
+    operator<<(std::ostream &os, const task &t);
 };
+
+std::ostream &
+operator<<(std::ostream &os, const task &t)
+{
+    switch (t.state) {
+    case task_state::RUNNABLE:
+        os << "(Task " << t.task_id << ')';
+        break;
+    default:
+        os << "(Task " << t.task_id << ", PID: " << t.pid << ')';
+        break;
+    }
+    return os;
+}
 
 /* cpu bound task */
 class cpu_task : public task {
@@ -181,7 +198,7 @@ public:
             });
         });
 
-        int N = 1 << 20;
+        int N = 1 << 15;
         while (N--) {
             std::array<std::array<float, 16>, 16> C{};
             for (int i = 0; i < 16; ++i)
@@ -209,12 +226,18 @@ public:
             return;
         
         std::vector<std::string> v(4096, "01010");
-        int N = 1 << 20;
+        int N = 1 << 15;
         while (N--) {
-            size_t i1 = generator::rand<size_t>(0, 4095);
-            size_t i2 = generator::rand<size_t>(0, 4095);
-            [[maybe_unused]] std::string s1 = v[i1];
-            [[maybe_unused]] std::string s2 = v[i2];
+            for (int i = 0; i < 16; ++i) {
+                size_t i0 = generator::rand<size_t>(0, 4095);
+                size_t i1 = generator::rand<size_t>(0, 4095);
+                size_t i2 = generator::rand<size_t>(0, 4095);
+                size_t i3 = generator::rand<size_t>(0, 4095);
+                [[maybe_unused]] std::string s0 = v[i0];
+                [[maybe_unused]] std::string s1 = v[i1];
+                [[maybe_unused]] std::string s2 = v[i2];
+                [[maybe_unused]] std::string s3 = v[i3];
+            }
         }
         exit(0);
     }
