@@ -15,12 +15,12 @@
 #include "types.hpp"
 #include "task.hpp"
 
-#define MLFQ_STOP_FLAG   0x1
-#define MLFQ_PAUSE_FLAG  0x2
-#define MLFQ_HALT_FLAG   0x4
-#define MLFQ_STOP(flag)  ((flag) & MLFQ_STOP_FLAG)
-#define MLFQ_PAUSE(flag) ((flag) & MLFQ_PAUSE_FLAG)
-#define MLFQ_HALT(flag)  ((flag) & MLFQ_HALT_FLAG)
+#define MLFQ_STOP_FLAG  0x1
+#define MLFQ_HALT_FLAG  0x2
+#define MLFQ_PRIO_FLAG  0x4
+#define MLFQ_STOP(flag) ((flag) & MLFQ_STOP_FLAG)
+#define MLFQ_HALT(flag) ((flag) & MLFQ_HALT_FLAG)
+#define MLFQ_PRIO(flag) ((flag) & MLFQ_PRIO_FLAG)
 
 namespace scheduler {
 class mlfq {
@@ -59,7 +59,7 @@ private:
      *  task
      */
     void
-    schedule(task *t, u32 level) noexcept
+    schedule(task *t, u32 lvl) noexcept
     {
         assert(t->get_state() != task_state::RUNNING ||
                t->get_state() != task_state::FINISHED);
@@ -105,10 +105,10 @@ private:
             if (get_ms_diff(*prev_ru, cur_ru) >= timeslice.count()) {
                 /* demote queue level and insert there */
                 t->set_rusage(&cur_ru);
-                enqueue(t, (level > 0) ? level - 1 : level);
+                enqueue(t, (lvl > 0) ? lvl - 1 : lvl);
             } else {
             /* else keep on the same queue level */
-                enqueue(t, level);
+                enqueue(t, lvl);
             }
         } else if (WIFSIGNALED(wstat) && WTERMSIG(wstat) == SIGSTOP) {
             err(EXIT_FAILURE, "STOPSIG caused child to terminate");
@@ -117,7 +117,8 @@ private:
     }
 
 public:
-    mlfq(u32 ncpus = 1, milliseconds timeslice = 24ms, u32 nlevels = 4,
+    mlfq(u32 ncpus = std::thread::hardware_concurrency(),
+         milliseconds timeslice = 24ms, u32 nlevels = 4,
          [[maybe_unused]] milliseconds prio_boost_freq = 2500ms) noexcept
         : tasks(std::vector<std::queue<task *>>(nlevels)),
           conds(std::vector<std::condition_variable>(nlevels)),
@@ -130,53 +131,54 @@ public:
             threads.emplace_back([&]{
                 while (true) {
                     task *t = nullptr;
-                    u32 level;
-                    for (level = 0; level < tasks.size(); ++level) {
-                        std::unique_lock<std::mutex> lk(locks[level]);
-                        conds[level].wait(lk, [&]{
-                            return (MLFQ_STOP(flag) || !tasks[level].empty() ||
-                                   MLFQ_HALT(flag)) && !MLFQ_PAUSE(flag);
+                    u32 lvl;
+                    for (lvl = 0; lvl < tasks.size(); ++lvl) {
+                        std::unique_lock<std::mutex> lk(locks[lvl]);
+                        conds[lvl].wait(lk, [&]{
+                            return MLFQ_STOP(flag) || MLFQ_HALT(flag) ||
+                                   !tasks[lvl].empty() || MLFQ_PRIO(flag);
                         });
                         if (MLFQ_HALT(flag))
                             return;
-                        if (tasks[level].empty()) {
-                            if (MLFQ_STOP(flag) && level == tasks.size() - 1)
+                        else if (tasks[lvl].empty()) {
+                            if (MLFQ_STOP(flag) && lvl == tasks.size() - 1)
                                 return;
                             continue;
                         }
-                        t = tasks[level].front();
-                        tasks[level].pop();
+                        t = tasks[lvl].front();
+                        tasks[lvl].pop();
                         break;
                     }
-                    if (t)
-                        schedule(t, level);
+                    if (t && MLFQ_PRIO(flag))
+                        enqueue(t, 0);
+                    else if (t)
+                            schedule(t, lvl);
                 }
             });
         }
         /* priority boost thread */
-        // threads.emplace_back([&]{
-        //     while (true) {
-        //         std::unique_lock<std::mutex> lk0(locks[0], std::defer_lock);
-        //         conds[0].wait_for(lk0, prio_boost_freq, [&]{
-        //             return MLFQ_HALT(flag) || MLFQ_STOP(flag);
-        //         });
-        //         if (MLFQ_HALT(flag) || MLFQ_STOP(flag))
-        //             return;
-        //         flag |= MLFQ_PAUSE_FLAG;
-        //         std::vector<task *> boosted_tasks;
-        //         boosted_tasks.reserve(50);
-        //         for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
-        //             {
-        //                 std::lock_guard<std::mutex> lk(locks[lvl]);
-        //                 while (!tasks[lvl].empty()) {
-        //                     boosted_tasks.push_back(tasks[lvl].front());
-        //                     tasks[lvl].pop();
-        //                 }
-        //             }
-        //         }
-        //         enqueue(begin(boosted_tasks), end(boosted_tasks), 0);
-        //     }
-        // });
+        threads.emplace_back([&]{
+                do {
+                {
+                    std::unique_lock<std::mutex> lk(locks[0]);
+                    conds[0].wait_for(lk, prio_boost_freq, [&]{
+                        return MLFQ_STOP(flag) || MLFQ_HALT(flag);
+                    });
+                }
+                if (MLFQ_STOP(flag) || MLFQ_HALT(flag))
+                    return;
+                flag.fetch_or(MLFQ_PRIO_FLAG);
+                for (u32 lvl = 1; lvl < tasks.size(); ++lvl) {
+                    {
+                        std::unique_lock<std::mutex> lk(locks[lvl]);
+                        if (tasks[lvl].empty())
+                            continue;
+                        conds[lvl].notify_all();
+                    }
+                }
+                flag.fetch_xor(MLFQ_PRIO_FLAG);
+            } while (1);    
+        });
     }
     
     /*
@@ -185,16 +187,20 @@ public:
      */
     ~mlfq() noexcept
     {
+        /* 
+         *  if mlfq execution was halted, then all threads should have already
+         *  been joined
+         */
         if (MLFQ_HALT(flag))
             return;
         flag.fetch_or(MLFQ_STOP_FLAG);
-        for (u32 level = 0; level < tasks.size(); ++level) {
-            std::lock_guard<std::mutex> lk(locks[level]);
-            conds[level].notify_all();
+        for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
+            std::lock_guard<std::mutex> lk(locks[lvl]);
+            conds[lvl].notify_all();
         }
-        for (std::thread &thrd : threads)
-            if (thrd.joinable())
-                thrd.join();
+        for (std::thread &th : threads)
+            if (th.joinable())
+                th.join();
     }
     
     /*
@@ -205,15 +211,15 @@ public:
     halt() noexcept
     {
         flag.fetch_or(MLFQ_HALT_FLAG);
-        for (u32 level = 0; level < tasks.size(); ++level) {
+        for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
             {
-                std::lock_guard<std::mutex> lk(locks[level]);
-                conds[level].notify_all();
+                std::lock_guard<std::mutex> lk(locks[lvl]);
+                conds[lvl].notify_all();
             }
         }
-        for (std::thread &thrd : threads)
-            if (thrd.joinable())
-                thrd.join();
+        for (std::thread &th : threads)
+            if (th.joinable())
+                th.join();
     }
 
     /*
@@ -223,20 +229,20 @@ public:
      *  the enqueue function allows for specifying a queue level
      */
     void
-    enqueue(task *t, u32 level = 0) noexcept
+    enqueue(task *t, u32 lvl = 0) noexcept
     {
-        std::lock_guard<std::mutex> lock(locks[level]);
-        tasks[level].push(t);
-        conds[level].notify_one();
+        std::lock_guard<std::mutex> lock(locks[lvl]);
+        tasks[lvl].push(t);
+        conds[lvl].notify_one();
     }
 
     template<typename T>
     void
-    enqueue(T &t, u32 level = 0) noexcept
+    enqueue(T &t, u32 lvl = 0) noexcept
     {
-        std::lock_guard<std::mutex> lock(locks[level]);
-        tasks[level].push(new task(t));
-        conds[level].notify_one();
+        std::lock_guard<std::mutex> lock(locks[lvl]);
+        tasks[lvl].push(new task(t));
+        conds[lvl].notify_one();
     }
     
     template<typename T, typename ...Args>
