@@ -1,4 +1,4 @@
-CXXFLAGS=-std=c++20 -g3 -O0
+CXXFLAGS=-std=c++20 -g -O2 -Wall -Werror -Wextra -fsanitize=thread
 
 all: schedsim
 

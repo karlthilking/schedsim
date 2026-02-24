@@ -30,7 +30,7 @@ private:
     std::vector<std::condition_variable>    conds;
     std::vector<std::mutex>                 locks;
     milliseconds                            timeslice;
-    u8                                      flag;
+    std::atomic<u8>                         flag;
     
     /*  
      *  Get the user and system CPU usage difference beetween
@@ -118,28 +118,29 @@ private:
 
 public:
     mlfq(u32 ncpus = 1, milliseconds timeslice = 24ms, u32 nlevels = 4,
-         milliseconds prio_boost_freq = 2500ms) noexcept
-        : timeslice(timeslice),
-          flag(0),
-          tasks(std::vector<std::queue<task *>>(nlevels)),
+         [[maybe_unused]] milliseconds prio_boost_freq = 2500ms) noexcept
+        : tasks(std::vector<std::queue<task *>>(nlevels)),
           conds(std::vector<std::condition_variable>(nlevels)),
-          locks(std::vector<std::mutex>(nlevels))
-
+          locks(std::vector<std::mutex>(nlevels)),
+          timeslice(timeslice),
+          flag(0)
     {
-        threads.reserve(ncpus);
+        threads.reserve(ncpus + 1);
         for (u32 cpuid = 0; cpuid < ncpus; ++cpuid) {
             threads.emplace_back([&]{
                 while (true) {
-                    task *t;
+                    task *t = nullptr;
                     u32 level;
                     for (level = 0; level < tasks.size(); ++level) {
                         std::unique_lock<std::mutex> lk(locks[level]);
                         conds[level].wait(lk, [&]{
-                            return (MLFQ_STOP(flag) || !tasks[level].empty()) ||
-                                    MLFQ_HALT(flag);
+                            return (MLFQ_STOP(flag) || !tasks[level].empty() ||
+                                   MLFQ_HALT(flag)) && !MLFQ_PAUSE(flag);
                         });
+                        if (MLFQ_HALT(flag))
+                            return;
                         if (tasks[level].empty()) {
-                            if (MLFQ_HALT(flag) && level == tasks.size() - 1)
+                            if (MLFQ_STOP(flag) && level == tasks.size() - 1)
                                 return;
                             continue;
                         }
@@ -147,32 +148,33 @@ public:
                         tasks[level].pop();
                         break;
                     }
-                    schedule(t, level);
+                    if (t)
+                        schedule(t, level);
                 }
             });
         }
         /* priority boost thread */
         // threads.emplace_back([&]{
         //     while (true) {
-        //         std::this_thread::sleep_for(prio_boost_freq);
-        //         std::unique_lock<std::mutex> lk(locks[0]);
+        //         std::unique_lock<std::mutex> lk0(locks[0], std::defer_lock);
+        //         conds[0].wait_for(lk0, prio_boost_freq, [&]{
+        //             return MLFQ_HALT(flag) || MLFQ_STOP(flag);
+        //         });
+        //         if (MLFQ_HALT(flag) || MLFQ_STOP(flag))
+        //             return;
         //         flag |= MLFQ_PAUSE_FLAG;
-        //         for (u32 level = 1; level < tasks.size(); ++level) {
+        //         std::vector<task *> boosted_tasks;
+        //         boosted_tasks.reserve(50);
+        //         for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
         //             {
-        //                 std::scoped_lock lock(locks[0], locks[level]);
-        //                 if (MLFQ_STOP(flag) || MLFQ_HALT(flag))
-        //                     return;
-        //                 else if (tasks[level].empty())
-        //                     continue;
-        //                 while (!tasks[level].empty()) {
-        //                     tasks[0].push(tasks[level].front());
-        //                     tasks[level].pop();
+        //                 std::lock_guard<std::mutex> lk(locks[lvl]);
+        //                 while (!tasks[lvl].empty()) {
+        //                     boosted_tasks.push_back(tasks[lvl].front());
+        //                     tasks[lvl].pop();
         //                 }
         //             }
-        //             conds[level].notify_all();
         //         }
-        //         flag ^= MLFQ_PAUSE_FLAG;
-        //         conds[0].notify_all();
+        //         enqueue(begin(boosted_tasks), end(boosted_tasks), 0);
         //     }
         // });
     }
@@ -185,7 +187,7 @@ public:
     {
         if (MLFQ_HALT(flag))
             return;
-        flag |= MLFQ_STOP_FLAG;
+        flag.fetch_or(MLFQ_STOP_FLAG);
         for (u32 level = 0; level < tasks.size(); ++level) {
             std::lock_guard<std::mutex> lk(locks[level]);
             conds[level].notify_all();
@@ -202,11 +204,12 @@ public:
     void
     halt() noexcept
     {
-        flag |= MLFQ_HALT_FLAG;
+        flag.fetch_or(MLFQ_HALT_FLAG);
         for (u32 level = 0; level < tasks.size(); ++level) {
-            assert(MLFQ_HALT(flag));
-            std::lock_guard<std::mutex> lk(locks[level]);
-            conds[level].notify_all();
+            {
+                std::lock_guard<std::mutex> lk(locks[level]);
+                conds[level].notify_all();
+            }
         }
         for (std::thread &thrd : threads)
             if (thrd.joinable())
@@ -243,6 +246,16 @@ public:
         std::lock_guard<std::mutex> lock(locks[0]);
         tasks[0].push(new task(std::forward<Args>(args)...));
         conds[0].notify_one();
+    }
+
+    template<typename It>
+    void
+    enqueue(It begin, It end, u32 lvl = 0)
+    {
+        std::lock_guard<std::mutex> lk(locks[lvl]);
+        for (auto it = begin; it != end; ++it)
+            tasks[lvl].push(*it);
+        conds[lvl].notify_all();
     }
 };
 } // namespace scheduler

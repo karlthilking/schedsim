@@ -120,7 +120,6 @@ public:
     milliseconds
     get_t_response() const noexcept
     {
-        assert(state == task_state::FINISHED);
         return stat->get_t_response(); 
     }
     milliseconds
