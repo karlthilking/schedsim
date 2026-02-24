@@ -1,3 +1,6 @@
+#ifndef SCHEDSIM_RANDOM_H
+#define SCHEDSIM_RANDOM_H
+
 #include <random>
 #include <type_traits>
 
@@ -9,7 +12,8 @@ public:
     {
         static std::random_device rd;
         static std::mt19937 gen(rd());
-        static uniform_real_distribution<> dist(0.0f, 1.0f);
+        static std::uniform_real_distribution<> dist(0.0f, 1.0f);
         return static_cast<T>((hi - lo) * dist(gen) + lo);
     }
 };
+#endif

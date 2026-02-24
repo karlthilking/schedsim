@@ -16,10 +16,10 @@
 #include "task.hpp"
 #include "types.hpp"
 
-#define STOP_FLAG   0x1
-#define HALT_FLAG   0x2
-#define STOP(flag)  ((flag) & STOP_FLAG)
-#define HALT(flag)  ((flag) & HALT_FLAG)
+#define RR_STOP_FLAG   0x1
+#define RR_HALT_FLAG   0x2
+#define RR_STOP(flag)  ((flag) & RR_STOP_FLAG)
+#define RR_HALT(flag)  ((flag) & RR_HALT_FLAG)
 
 namespace scheduler {
 class roundrobin {
@@ -67,10 +67,10 @@ public:
                     {
                         std::unique_lock<std::mutex> lock(mtx);
                         cv.wait(lock, [this] {
-                            return STOP(flag) || HALT(flag) ||
+                            return RR_STOP(flag) || RR_HALT(flag) ||
                                    !(tasks.empty());
                         });
-                        if (HALT(flag) || (STOP(flag) && tasks.empty()))
+                        if (RR_HALT(flag) || (RR_STOP(flag) && tasks.empty()))
                             return;
                         t = tasks.front();
                         tasks.pop();
@@ -83,7 +83,7 @@ public:
 
     ~roundrobin() noexcept
     {
-        flag |= STOP_FLAG;
+        flag |= RR_STOP_FLAG;
         cv.notify_all();
         for (std::thread &thrd : threads)
             thrd.join();
@@ -92,7 +92,7 @@ public:
     void
     halt() noexcept
     {
-        flag = HALT_FLAG;
+        flag = RR_HALT_FLAG;
         cv.notify_all();
         for (std::thread &thrd : threads)
             thrd.join();
@@ -125,3 +125,4 @@ public:
     }
 };
 } // namespace scheduler
+#endif

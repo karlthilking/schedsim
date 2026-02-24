@@ -1,4 +1,4 @@
-CXXFLAGS=-std=c++20 -g3 -O0 -Wall -Werror -Wextra
+CXXFLAGS=-std=c++20 -g3 -O0
 
 all: schedsim
 

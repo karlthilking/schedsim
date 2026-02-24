@@ -9,12 +9,13 @@
 #include <fcntl.h>
 #include "../include/types.hpp"
 #include "../include/task.hpp"
-#include "../include/sjf.hpp"
 #include "../include/rr.hpp"
+#include "../include/mlfq.hpp"
+#include "../include/random.hpp"
 
-#define OPT_SJF     0x1  // simulate shortest job first
-#define OPT_RR      0x2  // simulate round robin
-#define SCHED_MASK  0x3  // check if any scheduler was selected
+#define S_RR        0x01
+#define S_MLFQ      0x02
+#define S_MASK      0x03
 
 void 
 print_usage()
@@ -25,58 +26,70 @@ print_usage()
               << "Tunable Parameters:\n"
               << "\t--ncpus=N\tSimulate scheduling on N cpus\n"
               << "\t--timeslice=T\tSimulate a timeslice of T ms\n"
+              << "\t--nlevels=N\tUse N queues (for MLFQ)\n"
               << "\nScheduler Options:\n"
-              << "\t* sjf\t\tShortest-Job-First Scheduler\n"
+              << "\t* mlfq\t\tMulti-Level Feedback Queue Scheduler\n"
               << "\t* rr\t\tRound Robin Scheduler\n\n";
 }
 
-u32
-randint(u32 lo, u32 hi)
+/*
+ *  Display the following metrics of scheduler performance:
+ *      - average turnaround time
+ *      - average response time
+ *      - average waiting time
+ *      - cpu utilization
+ *      - throughput
+ */
+void
+show_stats(const std::vector<task *> &tasks,
+           time_point<high_resolution_clock> t_start, u32 ncpus)
 {
-    static std::random_device rd{};
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> dist(0.0f, 1.0f);
+    auto t_now = high_resolution_clock::now();
 
-    return static_cast<int>((hi - lo) * dist(gen) + lo);
-}
-
-std::vector<ms_t>
-generate_runtimes()
-{
-	u32 ntasks = randint(5, 20);
-	std::vector<ms_t> runtimes(ntasks);
-	
-	std::generate(begin(runtimes), end(runtimes), 
-		      [&]{ return randint(100, 2500); });
-
-	return runtimes;
-}
-
-template<typename S, typename T>
-std::vector<T> *
-simulate_scheduler(S &&sched, const std::vector<ms_t> &runtimes)
-{
-	std::vector<T> *tasks = new std::vector<T>{};
-	tasks->reserve(runtimes.size());
-
-	time_point t_start = hrclock_t::now();
-	for (u32 i = 0; i < runtimes.size(); ++i) {
-		tasks->emplace_back(runtimes[i], i + 1);
-		sched.enqueue(tasks->back());
-
-		if (randint(0, 3))
-			std::this_thread::sleep_for(randint(250, 500));
-
-		auto t_arrival = std::chrono::duration_cast<ms_t>(
-			tasks->back().get_t_arrival() - start
-		);
-
-		std::cout << "(Task " << std::to_string(i + 1)
-		          << ") Arrival Time: " << t_arrival
-			  << ", Total Runtime: "
-			  << tasks->back().get_rt_total() << '\n';
-	}
-	return tasks;
+    u32 nfinished = 0;
+    u32 nstarted = 0;
+    milliseconds avg_t_turnaround = 0ms;
+    milliseconds avg_t_response = 0ms;
+    milliseconds avg_t_waiting = 0ms;
+    milliseconds t_total = duration_cast<milliseconds>(t_now - t_start);
+    float cpu_utilization = 0.0f;
+    float throughput = 0.0f;
+    float pct_finished = 0.0f;
+    std::for_each(begin(tasks), end(tasks), [&](const task *t){
+        /* task never started */
+        if (t->get_state() == task_state::RUNNABLE)
+            return;
+        else if (t->get_state() == task_state::FINISHED) {
+            avg_t_turnaround += t->get_t_turnaround();
+            float t_utilized = (t->get_t_turnaround().count() - 
+                                t->get_total_waittime().count());
+            cpu_utilization += t_utilized;
+            ++nfinished;
+            ++throughput;
+        } else {
+            cpu_utilization +=
+                (duration_cast<milliseconds>(t_now - t->get_t_start()).count()
+                 - t->get_total_waittime().count());
+        }
+        ++nstarted;
+        avg_t_response += t->get_t_response();
+        avg_t_waiting += t->get_total_waittime();
+    });
+    avg_t_turnaround /= nfinished;
+    avg_t_response /= nstarted;
+    avg_t_waiting /= nstarted;
+    cpu_utilization /= duration_cast<milliseconds>(t_now - t_start).count();
+    cpu_utilization /= ncpus;
+    throughput /= duration_cast<seconds>(t_now - t_start).count();
+    pct_finished = 
+        (static_cast<float>(nfinished) / static_cast<float>(nstarted)) * 100;
+    std::cout << "Percent Tasks Finished " << pct_finished << "%\n"
+              << "Total Runtime: " << t_total.count() << "ms\n"
+              << "Average Turnaround Time: " << avg_t_turnaround.count()
+              << "ms\nAverage Response Time: " << avg_t_response.count()
+              << "ms\nAverage Wait Time: " << avg_t_waiting.count()
+              << "ms\nCPU Utilization: " << (cpu_utilization * 100) << '%'
+              << "\nThroughput: " << throughput << " (tasks/sec)\n";
 }
 
 int 
@@ -84,46 +97,62 @@ main(int argc, char *argv[])
 {
     if (argc < 2) {
         print_usage();
-        exit(1);
+        exit(EXIT_FAILURE);
     }
-    u8 opt;
-    // default parameters: cpus=1, timeslice=24ms
-    u32 ncpus = 1;     
-    ms_t timeslice = 24ms;  
-    for (int i{1}; i < argc; ++i) {
-        if (!strncmp(argv[i], "-s=sjf", 6)) {
-            opt |= OPT_SJF;
-        } else if (!strncmp(argv[i], "-s=rr", 5)) {
-            opt |= OPT_RR;
-        } else if (!strncmp(argv[i], "--ncpus=", 8)) {
-            ncpus = std::stoi(argv[i] + 8);
-        } else if (!strncmp(argv[i], "--timeslice=", 12)) {
-            timeslice = ms_t{std::stoi(argv[i] + 12)};
-        } else {
+    u8 opt = 0;
+    u32 ncpus = 1;
+    std::size_t nlevels = 4;
+    milliseconds timeslice = 24ms;
+    for (int i = 1; i < argc; ++i) {
+        if (!strncmp(argv[i], "-s=rr", 5))
+            opt |= S_RR;
+        else if (!strncmp(argv[i], "-s=mlfq", 7))
+            opt |= S_MLFQ;
+        else if (!strncmp(argv[i], "--ncpus=", 8))
+            ncpus = static_cast<u32>(std::stoi(argv[i] + 8));
+        else if (!strncmp(argv[i], "--timeslice=", 12))
+            timeslice = milliseconds(std::stoi(argv[i] + 12));
+        else if (!strncmp(argv[i], "--nlevels=", 10))
+            nlevels = static_cast<size_t>(std::stoul(argv[i] + 10));
+        else
             std::cerr << "Unrecognized argument: " << argv[i] << '\n';
-            exit(1);
+    }
+    if (!(opt & S_MASK)) {
+        std::cerr << "No scheduler was selected. Exiting...\n";
+        exit(EXIT_FAILURE);
+    }
+    if (opt & S_RR) {
+        /* incomplete for now */
+        ;
+    }
+    if (opt & S_MLFQ) {
+        std::vector<task *> tasks;
+        tasks.reserve(250);
+        time_point<high_resolution_clock> t, t_start, t_end;
+        
+        scheduler::mlfq mlfq(ncpus, timeslice, nlevels);
+        u32 id = 0;
+        t_start = high_resolution_clock::now();
+        t_end = t_start + 10000ms;
+        for (t = t_start; t < t_end; t = high_resolution_clock::now()) {
+            if (generator::rand<int>(0, 1))
+                tasks.emplace_back(new cpu_task(id++));
+            else
+                tasks.emplace_back(new mem_task(id++));
+            std::cout << "(Task " << tasks.back()->get_task_id()
+                      << ") spawned\n";
+            mlfq.enqueue(tasks.back());
+            if (generator::rand<int>(0, 3))
+                std::this_thread::sleep_for(
+                    milliseconds(generator::rand<int>(500, 1000))
+                );
         }
+        mlfq.halt();
+        std::cout << "Simulation exited\n";
+        
+        show_stats(tasks, t_start, ncpus);
+        /* cleanup */
+        std::for_each(begin(tasks), end(tasks), [](task *t){ delete t; });
     }
-    if (!(opt & SCHED_MASK)) {
-        std::cerr << "No scheduler selected. Exiting...\n";
-        exit(1);
-    }
-    
-    // vector of random task runtimes
-    std::vector<ms_t> runtimes = generate_random_runtimes();
-
-    std::vector<task_t> *tasks;
-    if (opt & OPT_SJF) {
-        std::cout << "Simulating SJF Scheduler\n";
-        tasks = simulate_sched(sched::sjf(ncpus), runtimes);
-        report_stats(*tasks);
-        delete tasks;
-    }
-    if (opt & OPT_RR) {
-        std::cout << "Simulating Round Robin Scheduler\n";
-        tasks = simulate_sched(sched::rr(ncpus, timeslice), runtimes);
-        report_stats(*tasks);
-        delete tasks;
-    }
-    exit(0);
+    exit(EXIT_SUCCESS);
 }

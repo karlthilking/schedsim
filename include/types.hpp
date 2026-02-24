@@ -6,7 +6,7 @@
 
 // for high_resolution_clock, duration_cast, literal time quantities, etc.
 using namespace std::chrono;
-using time_point = time_point<high_resolution_clock>;
+using namespace std::literals;
 
 // integer type aliases
 using i8    = int8_t;

@@ -7,7 +7,10 @@
 #include <chrono>
 #include <unistd.h>
 #include <sys/time.h>
+#include <sys/resource.h>
 #include <cstring>
+#include <cassert>
+#include <algorithm>
 #include "types.hpp"
 #include "random.hpp"
 
@@ -64,49 +67,27 @@ public:
     {
         stat->t_start = high_resolution_clock::now();
         if (timerisset(&ru->ru_utime)) {
-            ru.ru_utime.tv_sec = 0;
-            ru.ru_utime.tv_usec = 0;
+            ru->ru_utime.tv_sec = 0;
+            ru->ru_utime.tv_usec = 0;
         } else if (timerisset(&ru->ru_stime)) {
-            ru.ru_stime.tv_sec = 0;
-            ru.ru_stime.tv_usec = 0;
+            ru->ru_stime.tv_sec = 0;
+            ru->ru_stime.tv_usec = 0;
         }
     }
-
+    
+    virtual 
     ~task() noexcept
     {
         delete ru;
         delete stat;
     }
     
-    task(const task_t &_) = delete;
-    task &operator=(const task_t &_) = delete;
-
-    task(task_t &&other) noexcept
-        : ru(std::move(other.ru)),
-          stat(std::move(other.stat)),
-          pid(std::move(other.pid)),
-          task_id(std::move(other.task_id)),
-          state(std::move(other.state))
-    {}
-
-    task &operator=(task_t &&other) noexcept
-    {
-        if (this != &other) {
-            ru = std::move(other.ru);
-            stat = std::move(other.stat),
-            pid = std::move(other.pid);
-            task_id = std::move(other.task_id);
-            state = std::move(other.state);
-        }
-        return this;
-    }
-
-    virtual void run() = 0;
+    virtual void run() noexcept = 0;
 
     task_state 
     get_state() const noexcept { return state; }
 
-    task_state 
+    void
     set_state(task_state new_state) noexcept { state = new_state; }
 
     pid_t
@@ -115,13 +96,13 @@ public:
     u32
     get_task_id() const noexcept { return task_id; }
 
-    const struct rusage &
-    get_rusage() const noexcept { return *ru; }
+    struct rusage * 
+    get_rusage() const noexcept { return ru; }
     
     void
-    set_rusage(struct rusage &new_ru) noexcept
+    set_rusage(struct rusage *new_ru) noexcept
     {
-        memcpy((void *)ru, (void *)&new_ru, sizeof(*ru));
+        memcpy((void *)ru, (void *)new_ru, sizeof(struct rusage));
     }
     
     time_point<high_resolution_clock>
@@ -149,34 +130,37 @@ public:
     }
 
     void
-    set_t_completion(time_point t_completion) noexcept
+    set_t_completion(time_point<high_resolution_clock> t_completion) noexcept
     {
         stat->t_completion = t_completion;
     }
     void
-    set_t_firstrun(time_point t_firstrun) noexcept
+    set_t_firstrun(time_point<high_resolution_clock> t_firstrun) noexcept
     {
         stat->t_firstrun = t_firstrun;
     }
     void 
-    set_t_laststop(time_point stop_time) noexcept
+    set_t_laststop(time_point<high_resolution_clock> stop_time) noexcept
     {
         stat->t_laststop = stop_time;
     }
     void
-    increment_waittime(time_point start_time) noexcept
+    increment_waittime(time_point<high_resolution_clock> start_time) noexcept
     {
-        stat->waittime += (start_time - stat->last_stop);
+        stat->waittime += duration_cast<milliseconds>(
+            start_time - stat->t_laststop
+        );
     }
 };
 
 /* cpu bound task */
 class cpu_task : public task {
 public:
-    cpu_task(u32 id) : task(id) {}
-
+    cpu_task(u32 id) noexcept : task(id) {}
+    virtual ~cpu_task() noexcept override {}
+    
     virtual void
-    run() override
+    run() noexcept override
     {
         pid = fork();
         if (pid < 0)
@@ -187,14 +171,18 @@ public:
         std::array<std::array<float, 16>, 16> A;
         std::array<std::array<float, 16>, 16> B;
         
-        std::generate(begin(A), end(A), [&]{
-            return generator::rand<float>(-1024.0f, 1024.0f);
+        std::for_each(begin(A), end(A), [&](std::array<float, 16> &row){
+            std::generate(begin(row), end(row), [&]{
+                return generator::rand<float>(-1024.0f, 1024.0f);
+            });
         });
-        std::generate(begin(B), end(B), [&]{
-            return generator::rand<float>(-1024.0f, 1024.0f);
+        std::for_each(begin(B), end(B), [&](std::array<float, 16> &row){
+            std::generate(begin(row), end(row), [&]{
+                return generator::rand<float>(-1024.0f, 1024.0f);
+            });
         });
-        
-        int N = 4096;
+
+        int N = 1 << 20;
         while (N--) {
             std::array<std::array<float, 16>, 16> C{};
             for (int i = 0; i < 16; ++i)
@@ -209,10 +197,11 @@ public:
 /* memory bound task */
 class mem_task : public task {
 public:
-    mem_task(u32 id) : task(id) {}
-
+    mem_task(u32 id) noexcept : task(id) {}
+    virtual ~mem_task() noexcept override {}
+    
     virtual void
-    run() override
+    run() noexcept override
     {
         pid = fork();
         if (pid < 0)
@@ -221,7 +210,7 @@ public:
             return;
         
         std::vector<std::string> v(4096, "01010");
-        int N = 4096;
+        int N = 1 << 20;
         while (N--) {
             size_t i1 = generator::rand<size_t>(0, 4095);
             size_t i2 = generator::rand<size_t>(0, 4095);
@@ -231,3 +220,4 @@ public:
         exit(0);
     }
 };
+#endif
