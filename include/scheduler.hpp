@@ -11,10 +11,15 @@
 
 namespace scheduler {
 template<typename S>
-concept is_scheduler_v = requires(S &s, task *t)
+concept is_scheduler = requires(S &s, task *t, u32 id)
 {
     s.enqueue(t);
+    s.template enqueue<cpu_task>(id);
+    s.template enqueue<mem_task>(id);
 };
+
+template<typename S>
+constexpr bool is_scheduler_v = is_scheduler<S>;
 
 template<typename S, typename... Args>
 void 
