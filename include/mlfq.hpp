@@ -40,8 +40,7 @@ private:
     void schedule(task *t, u32 lvl) noexcept;
 
 public:
-    mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels,
-         milliseconds prio_boost_freq = 2500ms) noexcept;
+    mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept;
     ~mlfq() noexcept; 
     void halt() noexcept; 
 

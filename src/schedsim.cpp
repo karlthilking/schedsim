@@ -78,6 +78,7 @@ main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     if (opt & S_MLFQ)
-        scheduler::run<scheduler::mlfq>(runtime, ncpus, timeslice, nlevels);
+        scheduler::run<scheduler::mlfq>(runtime, ncpus,
+                                        timeslice, nlevels);
     exit(EXIT_SUCCESS);
 }

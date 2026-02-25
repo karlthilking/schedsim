@@ -83,8 +83,7 @@ mlfq::schedule(task *t, u32 lvl) noexcept
     }
 }
 
-mlfq::mlfq(u32 ncpus, milliseconds timeslice, 
-           u32 nlevels, milliseconds prio_boost_freq) noexcept
+mlfq::mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept
     : tasks(std::vector<std::queue<task *>>(nlevels)),
       conds(std::vector<std::condition_variable>(nlevels)),
       locks(std::vector<std::mutex>(nlevels)),
@@ -125,26 +124,22 @@ mlfq::mlfq(u32 ncpus, milliseconds timeslice,
 
     /* priority boost thread */
     threads.emplace_back([&]{
+        const milliseconds prio_boost_freq = milliseconds(2500);
         do {
-            {
-                std::unique_lock<std::mutex> lk(locks[0]);
-                conds[0].wait_for(lk, prio_boost_freq, [&]{
-                    return MLFQ_STOP(flag) || MLFQ_HALT(flag);
-                });
-                if (MLFQ_STOP(flag) || MLFQ_HALT(flag))
-                    return;
-                flag.fetch_or(MLFQ_PRIO_FLAG);
-                for (u32 lvl = 1; lvl < tasks.size(); ++lvl) {
-                    {
-                        std::lock_guard<std::mutex> lk(locks[lvl]);
-                        if (tasks[lvl].empty())
-                            continue;
-                        conds[lvl].notify_all();
-                    }
-                }
+            std::this_thread::sleep_for(prio_boost_freq);
+            if (MLFQ_STOP(flag.fetch_or(MLFQ_PRIO_FLAG))) {
                 flag.fetch_xor(MLFQ_PRIO_FLAG);
+                return;
             }
-        } while (1);
+            for (u32 lvl = 1; lvl < tasks.size(); ++lvl) {
+                {
+                    std::lock_guard<std::mutex> lk(locks[lvl]);
+                    if (tasks[lvl].empty())
+                        continue;
+                    conds[lvl].notify_all();
+                }
+            }
+        } while (!MLFQ_STOP(flag.fetch_xor(MLFQ_PRIO_FLAG)));
     });
 }
 
@@ -155,6 +150,7 @@ mlfq::~mlfq() noexcept
     flag.fetch_or(MLFQ_STOP_FLAG);
     for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
         std::lock_guard<std::mutex> lk(locks[lvl]);
+        assert(MLFQ_STOP(flag));
         conds[lvl].notify_all();
     }
     for (std::thread &th : threads) {
