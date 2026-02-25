@@ -30,11 +30,11 @@ struct task_stat {
 
 class task {
 protected:
-    struct rusage   *ru;
-    task_stat       *stat;
-    pid_t           pid;
-    u32             task_id;
-    task_state      state;
+    struct rusage   *ru;        // 8 bytes 
+    task_stat       *stat;      // 8 bytes
+    pid_t           pid;        // 4 bytes 
+    u32             task_id;    // 4 bytes 
+    task_state      state;      // 1 byte  
 public:
     task(u32 id) noexcept;
     virtual ~task() noexcept;

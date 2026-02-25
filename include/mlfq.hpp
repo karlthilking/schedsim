@@ -15,12 +15,14 @@
 #include "types.hpp"
 #include "task.hpp"
 
-#define MLFQ_STOP_FLAG  0x1 // finish remaining tasks and stop
-#define MLFQ_HALT_FLAG  0x2 // stop immediately 
-#define MLFQ_PRIO_FLAG  0x4 // move tasks to level 0 for priority boost
-#define MLFQ_STOP(flag) ((flag) & MLFQ_STOP_FLAG)
-#define MLFQ_HALT(flag) ((flag) & MLFQ_HALT_FLAG)
-#define MLFQ_PRIO(flag) ((flag) & MLFQ_PRIO_FLAG)
+#define MLFQ_STOP_FLAG      0x1 // finish remaining tasks and stop
+#define MLFQ_HALT_FLAG      0x2 // stop immediately 
+#define MLFQ_PRIO_FLAG      0x4 // priority boost 
+#define MLFQ_STOP(flag)     ((flag) & MLFQ_STOP_FLAG)
+#define MLFQ_HALT(flag)     ((flag) & MLFQ_HALT_FLAG)
+#define MLFQ_PRIO(flag)     ((flag) & MLFQ_PRIO_FLAG)
+#define TIMESLICE(level)    milliseconds((((level) + 1) * 20))
+#define PRIO_BOOST_FREQ     milliseconds(2500)
 
 namespace scheduler {
 class mlfq {
@@ -29,8 +31,7 @@ private:
     std::vector<std::thread>                threads;
     std::vector<std::condition_variable>    conds;
     std::vector<std::mutex>                 locks;
-    std::mutex                              stdout_mtx;
-    milliseconds                            timeslice;
+    std::mutex                              io_mutex;
     std::atomic<u8>                         flag;
     
     u32
@@ -38,14 +39,10 @@ private:
     const noexcept;
     
     bool waiting_tasks() const noexcept;
-
     void schedule(task *t, u32 lvl) noexcept;
-
 public:
-    mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept;
-    
+    mlfq(u32 ncpus, u32 nlevels) noexcept;
     ~mlfq() noexcept; 
-    
     void halt() noexcept; 
 
     void enqueue(task *t, u32 lvl = 0) noexcept; 

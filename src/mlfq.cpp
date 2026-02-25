@@ -39,14 +39,14 @@ mlfq::schedule(task *t, u32 lvl) noexcept
 {
     assert(t->get_state() != task_state::RUNNING ||
            t->get_state() != task_state::FINISHED);
-
+    
     struct rusage *prev_ru = t->get_rusage();
     struct rusage cur_ru;
     
     /* task is running for the first time */
     if (t->get_state() == task_state::RUNNABLE) {
         {
-            std::lock_guard<std::mutex> lk(stdout_mtx);
+            std::lock_guard<std::mutex> lk(io_mutex);
             std::cout << *t << " started\n";
         }
         t->set_t_firstrun(high_resolution_clock::now());
@@ -61,7 +61,7 @@ mlfq::schedule(task *t, u32 lvl) noexcept
     }
     t->set_state(task_state::RUNNING);
 
-    std::this_thread::sleep_for(timeslice);
+    std::this_thread::sleep_for(TIMESLICE(lvl));
     kill(t->get_pid(), SIGSTOP);
 
     int rc, wstat;
@@ -77,7 +77,7 @@ mlfq::schedule(task *t, u32 lvl) noexcept
         t->set_t_completion(high_resolution_clock::now());
         t->set_rusage(&cur_ru);
         {
-            std::lock_guard<std::mutex> lk(stdout_mtx);
+            std::lock_guard<std::mutex> lk(io_mutex);
             std::cout << *t << " exited\n";
         }
     } 
@@ -90,9 +90,9 @@ mlfq::schedule(task *t, u32 lvl) noexcept
          *  in cpu time at the queue level than demote it
          *  to a lower queue level
          */
-        if (cpu_diff(*prev_ru, cur_ru) >= timeslice.count()) {
+        if (cpu_diff(*prev_ru, cur_ru) >= TIMESLICE(lvl).count()) {
             t->set_rusage(&cur_ru);
-            enqueue(t, (lvl > 0) ? lvl - 1 : lvl);
+            enqueue(t, (lvl < tasks.size() - 1) ? lvl + 1 : lvl);
         } else {
             enqueue(t, lvl);
         }
@@ -105,11 +105,10 @@ mlfq::schedule(task *t, u32 lvl) noexcept
     }
 }
 
-mlfq::mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept
+mlfq::mlfq(u32 ncpus, u32 nlevels) noexcept
     : tasks(std::vector<std::queue<task *>>(nlevels)),
       conds(std::vector<std::condition_variable>(nlevels)),
       locks(std::vector<std::mutex>(nlevels)),
-      timeslice(timeslice),
       flag(0)
 {
     threads.reserve(ncpus + 1);
@@ -131,7 +130,7 @@ mlfq::mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept
                      */
                     conds[lvl].wait(lk, [&]{
                         return MLFQ_STOP(flag) || MLFQ_HALT(flag) ||
-                               MLFQ_PRIO(flag) || waiting_tasks();
+                               waiting_tasks() || MLFQ_PRIO(flag);
                     });
                     if (MLFQ_HALT(flag))
                         return;
@@ -154,9 +153,8 @@ mlfq::mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept
 
     /* priority boost thread */
     threads.emplace_back([&]{
-        const milliseconds prio_boost_freq = milliseconds(2500);
         do {
-            std::this_thread::sleep_for(prio_boost_freq);
+            std::this_thread::sleep_for(PRIO_BOOST_FREQ);
             if (MLFQ_STOP(flag.fetch_or(MLFQ_PRIO_FLAG))) {
                 flag.fetch_xor(MLFQ_PRIO_FLAG);
                 return;
@@ -164,8 +162,6 @@ mlfq::mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept
             for (u32 lvl = 1; lvl < tasks.size(); ++lvl) {
                 {
                     std::lock_guard<std::mutex> lk(locks[lvl]);
-                    if (tasks[lvl].empty())
-                        continue;
                     conds[lvl].notify_all();
                 }
             }
