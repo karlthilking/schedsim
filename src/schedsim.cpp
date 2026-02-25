@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include "../include/types.hpp"
 #include "../include/task.hpp"
+#include "../include/rr.hpp"
 #include "../include/mlfq.hpp"
 #include "../include/random.hpp"
 #include "../include/metrics.hpp"
@@ -46,7 +47,7 @@ main(int argc, char *argv[])
     }
     u8 opt = 0;
     u32 ncpus = 1;
-    std::size_t nlevels = 4;
+    size_t nlevels = 4;
     milliseconds timeslice = 24ms;
     seconds runtime = 30s;
     for (int i = 1; i < argc; ++i) {
@@ -77,7 +78,9 @@ main(int argc, char *argv[])
         std::cerr << "No scheduler was selected. Exiting...\n";
         exit(EXIT_FAILURE);
     }
-    if (opt & S_MLFQ)
+    if (opt & S_RR)
+        scheduler::run<scheduler::rr>(runtime, ncpus, timeslice);
+    else if (opt & S_MLFQ)
         scheduler::run<scheduler::mlfq>(runtime, ncpus, nlevels);
     exit(EXIT_SUCCESS);
 }

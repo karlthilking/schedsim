@@ -4,6 +4,7 @@
 #include <chrono>
 #include <type_traits>
 #include <utility>
+#include "rr.hpp"
 #include "mlfq.hpp"
 #include "random.hpp"
 #include "metrics.hpp"
