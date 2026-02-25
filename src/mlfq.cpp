@@ -27,6 +27,13 @@ const noexcept
             (prev.ru_stime.tv_sec * 1000) + (prev.ru_stime.tv_usec / 1000));
 }
 
+bool
+mlfq::waiting_tasks() const noexcept
+{
+    return std::any_of(begin(tasks), end(tasks), 
+        [&](const std::queue<task *> &q){ return !q.empty(); });
+}
+
 void
 mlfq::schedule(task *t, u32 lvl) noexcept
 {
@@ -35,7 +42,8 @@ mlfq::schedule(task *t, u32 lvl) noexcept
 
     struct rusage *prev_ru = t->get_rusage();
     struct rusage cur_ru;
-
+    
+    /* task is running for the first time */
     if (t->get_state() == task_state::RUNNABLE) {
         {
             std::lock_guard<std::mutex> lk(stdout_mtx);
@@ -44,6 +52,10 @@ mlfq::schedule(task *t, u32 lvl) noexcept
         t->set_t_firstrun(high_resolution_clock::now());
         t->run();
     } else if (t->get_state() == task_state::STOPPED) {
+        /*
+         *  Increment task wait time by the difference of the current
+         *  time and previous task stop time
+         */
         t->increment_t_waiting(high_resolution_clock::now());
         kill(t->get_pid(), SIGCONT);
     }
@@ -57,7 +69,8 @@ mlfq::schedule(task *t, u32 lvl) noexcept
         err(EXIT_FAILURE, "wait4");
     else if (rc == 0)
         err(EXIT_FAILURE, "child state did not change");
-
+    
+    /* child process exited */
     if (WIFEXITED(wstat)) {
         assert(WEXITSTATUS(wstat) == 0);
         t->set_state(task_state::FINISHED);
@@ -67,16 +80,25 @@ mlfq::schedule(task *t, u32 lvl) noexcept
             std::lock_guard<std::mutex> lk(stdout_mtx);
             std::cout << *t << " exited\n";
         }
-    } else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) == SIGSTOP) {
+    } 
+    /* child process was stopped from the stop signal */
+    else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) == SIGSTOP) {
         t->set_state(task_state::STOPPED);
         t->set_t_laststop(high_resolution_clock::now());
+        /* 
+         *  If the process has accumulated more than a timeslice
+         *  in cpu time at the queue level than demote it
+         *  to a lower queue level
+         */
         if (cpu_diff(*prev_ru, cur_ru) >= timeslice.count()) {
             t->set_rusage(&cur_ru);
             enqueue(t, (lvl > 0) ? lvl - 1 : lvl);
         } else {
             enqueue(t, lvl);
         }
-    } else if (WIFSIGNALED(wstat) && WTERMSIG(wstat) == SIGSTOP) {
+    }
+    /* check for unexpected child process behavior */
+    else if (WIFSIGNALED(wstat) && WTERMSIG(wstat) == SIGSTOP) {
         err(EXIT_FAILURE, "SIGSTOP caused child to terminate");
     } else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) != SIGSTOP) {
         err(EXIT_FAILURE, "child received unexpected stop signal");
@@ -99,9 +121,17 @@ mlfq::mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept
                 u32 lvl;
                 for (lvl = 0; lvl < tasks.size(); ++lvl) {
                     std::unique_lock<std::mutex> lk(locks[lvl]);
+                    /* 
+                     *  wakeup on events that necessitate a response from
+                     *  a scheduling thread (e.g. exit when flag indicates
+                     *  that scheduling threads should stop or move tasks
+                     *  to highest queue level in the event of a priority
+                     *  boost); also wakeup if any tasks are waiting to
+                     *  be scheduled
+                     */
                     conds[lvl].wait(lk, [&]{
                         return MLFQ_STOP(flag) || MLFQ_HALT(flag) ||
-                               !tasks[lvl].empty() || MLFQ_PRIO(flag);
+                               MLFQ_PRIO(flag) || waiting_tasks();
                     });
                     if (MLFQ_HALT(flag))
                         return;

@@ -37,11 +37,15 @@ private:
     cpu_diff(const struct rusage &prev, const struct rusage &cur) 
     const noexcept;
     
+    bool waiting_tasks() const noexcept;
+
     void schedule(task *t, u32 lvl) noexcept;
 
 public:
     mlfq(u32 ncpus, milliseconds timeslice, u32 nlevels) noexcept;
+    
     ~mlfq() noexcept; 
+    
     void halt() noexcept; 
 
     void enqueue(task *t, u32 lvl = 0) noexcept; 
