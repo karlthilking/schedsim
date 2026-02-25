@@ -21,10 +21,14 @@ u32
 mlfq::cpu_diff(const struct rusage &prev, const struct rusage &cur) 
 const noexcept
 {
-    return ((cur.ru_utime.tv_sec * 1000) + (cur.ru_utime.tv_usec / 1000) +
-            (cur.ru_stime.tv_sec * 1000) + (cur.ru_stime.tv_usec / 1000)) -
-           ((prev.ru_utime.tv_sec * 1000) + (prev.ru_utime.tv_usec / 1000) +
-            (prev.ru_stime.tv_sec * 1000) + (prev.ru_stime.tv_usec / 1000));
+    return ((cur.ru_utime.tv_sec * 1000) +
+            (cur.ru_utime.tv_usec / 1000) +
+            (cur.ru_stime.tv_sec * 1000) +
+            (cur.ru_stime.tv_usec / 1000)) -
+           ((prev.ru_utime.tv_sec * 1000) +
+            (prev.ru_utime.tv_usec / 1000) +
+            (prev.ru_stime.tv_sec * 1000) +
+            (prev.ru_stime.tv_usec / 1000));
 }
 
 bool
@@ -45,10 +49,10 @@ mlfq::schedule(task *t, u32 lvl) noexcept
     
     /* task is running for the first time */
     if (t->get_state() == task_state::RUNNABLE) {
-        {
-            std::lock_guard<std::mutex> lk(io_mutex);
-            std::cout << *t << " started\n";
-        }
+        // {
+        //     std::lock_guard<std::mutex> lk(io_mutex);
+        //     std::cout << *t << " started\n";
+        // }
         t->set_t_firstrun(high_resolution_clock::now());
         t->run();
     } else if (t->get_state() == task_state::STOPPED) {
@@ -76,10 +80,10 @@ mlfq::schedule(task *t, u32 lvl) noexcept
         t->set_state(task_state::FINISHED);
         t->set_t_completion(high_resolution_clock::now());
         t->set_rusage(&cur_ru);
-        {
-            std::lock_guard<std::mutex> lk(io_mutex);
-            std::cout << *t << " exited\n";
-        }
+        // {
+        //     std::lock_guard<std::mutex> lk(io_mutex);
+        //     std::cout << *t << " exited\n";
+        // }
     } 
     /* child process was stopped from the stop signal */
     else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) == SIGSTOP) {
@@ -98,11 +102,11 @@ mlfq::schedule(task *t, u32 lvl) noexcept
         }
     }
     /* check for unexpected child process behavior */
-    else if (WIFSIGNALED(wstat) && WTERMSIG(wstat) == SIGSTOP) {
-        err(EXIT_FAILURE, "SIGSTOP caused child to terminate");
-    } else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) != SIGSTOP) {
-        err(EXIT_FAILURE, "child received unexpected stop signal");
-    }
+    // else if (WIFSIGNALED(wstat) && WTERMSIG(wstat) == SIGSTOP) {
+    //     err(EXIT_FAILURE, "SIGSTOP caused child to terminate");
+    // } else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) != SIGSTOP) {
+    //     err(EXIT_FAILURE, "child received unexpected stop signal");
+    // }
 }
 
 mlfq::mlfq(u32 ncpus, u32 nlevels) noexcept
@@ -129,14 +133,11 @@ mlfq::mlfq(u32 ncpus, u32 nlevels) noexcept
                      *  be scheduled
                      */
                     conds[lvl].wait(lk, [&]{
-                        return MLFQ_STOP(flag) || MLFQ_HALT(flag) ||
-                               waiting_tasks() || MLFQ_PRIO(flag);
+                        return MLFQ_EVENT(flag) || waiting_tasks();
                     });
-                    if (MLFQ_HALT(flag))
+                    if (MLFQ_STOP(flag) && !waiting_tasks())
                         return;
                     else if (tasks[lvl].empty()) {
-                        if (MLFQ_STOP(flag) && lvl == tasks.size() - 1)
-                            return;
                         continue;
                     }
                     t = tasks[lvl].front();
@@ -171,8 +172,6 @@ mlfq::mlfq(u32 ncpus, u32 nlevels) noexcept
 
 mlfq::~mlfq() noexcept
 {
-    if (MLFQ_HALT(flag))
-        return;
     flag.fetch_or(MLFQ_STOP_FLAG);
     for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
         std::lock_guard<std::mutex> lk(locks[lvl]);
@@ -185,21 +184,21 @@ mlfq::~mlfq() noexcept
     }
 }
 
-void
-mlfq::halt() noexcept
-{
-    flag.fetch_or(MLFQ_HALT_FLAG);
-    for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
-        {
-            std::lock_guard<std::mutex> lk(locks[lvl]);
-            conds[lvl].notify_all();
-        }
-    }
-    for (std::thread &th : threads) {
-        assert(th.joinable());
-        th.join();
-    }
-}
+// void
+// mlfq::halt() noexcept
+// {
+//     flag.fetch_or(MLFQ_HALT_FLAG);
+//     for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
+//         {
+//             std::lock_guard<std::mutex> lk(locks[lvl]);
+//             conds[lvl].notify_all();
+//         }
+//     }
+//     for (std::thread &th : threads) {
+//         assert(th.joinable());
+//         th.join();
+//     }
+// }
 
 void
 mlfq::enqueue(task *t, u32 lvl) noexcept

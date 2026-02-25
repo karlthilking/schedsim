@@ -77,7 +77,10 @@ task::get_rusage() const noexcept
 void
 task::set_rusage(struct rusage *new_ru) noexcept
 {
-    memcpy(ru, new_ru, sizeof(*ru));
+    ru->ru_utime.tv_sec = new_ru->ru_utime.tv_sec;
+    ru->ru_utime.tv_usec = new_ru->ru_utime.tv_usec;
+    ru->ru_stime.tv_sec = new_ru->ru_stime.tv_sec;
+    ru->ru_stime.tv_usec = new_ru->ru_stime.tv_usec;
 }
 
 time_point<high_resolution_clock>
@@ -161,30 +164,8 @@ cpu_task::run() noexcept
         err(EXIT_FAILURE, "fork");
     else if (pid > 0)
         return;
-
-    std::array<std::array<float, 16>, 16> A;
-    std::array<std::array<float, 16>, 16> B;
-
-    std::for_each(begin(A), end(A), [&](std::array<float, 16> &a){
-        std::generate(begin(a), end(a), [&]{
-            return generator::rand<float>(-1024.0f, 1024.0f);
-        });
-    });
-    std::for_each(begin(B), end(B), [&](std::array<float, 16> &a){
-        std::generate(begin(a), end(a), [&]{
-            return generator::rand<float>(-1024.0f, 1024.0f);
-        });
-    });
-
-    int N = 1 << 15;
-    while (N--) {
-        std::array<std::array<float, 16>, 16> C{};
-        for (int i = 0; i < 16; ++i)
-            for (int k = 0; k < 16; ++k)
-                for (int j = 0; j < 16; ++j)
-                    C[i][j] += A[i][k] * B[k][j];
-    }
-    exit(0);
+    if (execl("./bin/cpu_task", "./bin/cpu_task", nullptr) < 0)
+        err(EXIT_FAILURE, "execvp");
 }
 
 mem_task::mem_task(u32 id) noexcept : task(id) {}
@@ -197,21 +178,7 @@ mem_task::run() noexcept
         err(EXIT_FAILURE, "fork");
     else if (pid > 0)
         return;
-
-    std::vector<std::string> v(4096, "01010");
-    int N = 1 << 15;
-    while (N--) {
-        for (int i = 0; i < 16; ++i) {
-            size_t i0 = generator::rand<size_t>(0, 4095);
-            size_t i1 = generator::rand<size_t>(0, 4095);
-            size_t i2 = generator::rand<size_t>(0, 4095);
-            size_t i3 = generator::rand<size_t>(0, 4095);
-            [[maybe_unused]] std::string s0 = v[i0];
-            [[maybe_unused]] std::string s1 = v[i1];
-            [[maybe_unused]] std::string s2 = v[i2];
-            [[maybe_unused]] std::string s3 = v[i3];
-        }
-    }
-    exit(0);
+    if (execl("./bin/mem_task", "./bin/mem_task", nullptr) < 0)
+        err(EXIT_FAILURE, "execvp");
 }
 

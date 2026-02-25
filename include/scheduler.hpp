@@ -30,10 +30,9 @@ requires is_scheduler_v<S> && std::is_constructible_v<S, u32, Args...>
         S s(num_cpus, std::forward<Args>(args)...);
         for (u32 id = 0; high_resolution_clock::now() < t_end; ++id) {
             if (generator::rand<float>(0.0f, 1.0f) >= 0.5)
-                tasks.emplace_back(new cpu_task(id));
+                tasks.push_back(s.template enqueue<cpu_task>(id));
             else
-                tasks.emplace_back(new mem_task(id));
-            s.enqueue(tasks[id]);
+                tasks.push_back(s.template enqueue<mem_task>(id));
             std::this_thread::sleep_for(
                 milliseconds(generator::rand<int>(250, 600))
             );

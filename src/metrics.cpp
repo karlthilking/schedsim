@@ -2,6 +2,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cassert>
+#include <iostream>
+#include <iomanip>
 #include "../include/task.hpp"
 #include "../include/types.hpp"
 #include "../include/metrics.hpp"
@@ -14,8 +16,8 @@ bool
 metrics::is_cpu_task(task *t) const noexcept
 {
     try {
-        [[maybe_unused]] cpu_task &c = dynamic_cast<cpu_task &>(*t);
-    } catch (const std::exception &e) {
+        dynamic_cast<cpu_task &>(*t);
+    } catch (...) {
         return false;
     }
     return true;
@@ -25,8 +27,8 @@ bool
 metrics::is_mem_task(task *t) const noexcept
 {
     try {
-        [[maybe_unused]] mem_task &m = dynamic_cast<mem_task &>(*t);
-    } catch (const std::exception &e) {
+        dynamic_cast<mem_task &>(*t);
+    } catch (...) {
         return false;
     }
     return true;
