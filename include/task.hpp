@@ -9,10 +9,14 @@
 #include "types.hpp"
 
 enum class task_state { 
-    RUNNABLE,
-    RUNNING,
-    STOPPED,
-    FINISHED
+    RUNNABLE    = 'r',
+    RUNNING     = 'R',
+    SLEEPING    = 'S',
+    DISKSLEEP   = 'D',
+    STOPPED     = 'T',
+    ZOMBIE      = 'Z',
+    FINISHED    = 'X',
+    INVALID     = 'I'
 };
 
 struct task_stat {
@@ -30,11 +34,12 @@ struct task_stat {
 
 class task {
 protected:
-    struct rusage   *ru;        // 8 bytes 
-    task_stat       *stat;      // 8 bytes
-    pid_t           pid;        // 4 bytes 
-    u32             task_id;    // 4 bytes 
-    task_state      state;      // 1 byte  
+    struct rusage   *ru;        // resource usage 
+    task_stat       *stat;      // time tracking
+    FILE            *procf;     // process status file
+    pid_t           pid;        // process id
+    u32             task_id;    // program defined id 
+    task_state      state;      // task state
 public:
     task(u32 id) noexcept;
     virtual ~task() noexcept;
