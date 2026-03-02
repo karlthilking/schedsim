@@ -20,18 +20,21 @@ requires std::is_constructible_v<S, u32, Args...>
     tasks.reserve(100);
 
     auto t_start = high_resolution_clock::now();
-    auto t_end = t_start + runtime;
     {
         S s(num_cpus, std::forward<Args>(args)...);
-        for (u32 id = 0; high_resolution_clock::now() < t_end; ++id) {
-            if (generator::rand<float>(0.0f, 1.0f) >= 0.5)
+        time_point<high_resolution_clock> t_now;
+        u32 id = 0;
+        do {
+            t_now = high_resolution_clock::now();
+            if (!(id % 2))
                 tasks.push_back(s.template enqueue<cpu_task>(id));
             else
                 tasks.push_back(s.template enqueue<mem_task>(id));
             std::this_thread::sleep_for(
-                milliseconds(generator::rand<int>(250, 600))
+                milliseconds(generator::rand<int>(150, 500))
             );
-        }
+            ++id;
+        } while (duration_cast<seconds>(t_now - t_start) < runtime);
     }
     std::cout << "\nSimulation exited. Obtaining scheduling metrics...\n";
     metrics mt(tasks, num_cpus, t_start);

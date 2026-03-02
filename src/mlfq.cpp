@@ -1,9 +1,13 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <iostream>
 #include <queue>
 #include <vector>
 #include <atomic>
 #include <cassert>
 #include <pthread.h>
+#include <sched.h>
 #include <semaphore.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
@@ -160,10 +164,16 @@ mlfq::mlfq(u32 ncpus, u32 nlevels) noexcept
     /* store 0 to block threads until tasks are ready */
     sem_init(&sem, 0, 0);
     
-    threads = (pthread_t *)malloc(sizeof(pthread_t) * (ncpus + 1));
+    threads = (pthread_t *)malloc(sizeof(pthread_t) * ncpus);
+    cpu_set_t cpus;
     /* scheduler threads */
-    for (u32 i = 0; i < ncpus; ++i)
+    for (u32 i = 0; i < ncpus; ++i) {
+        CPU_ZERO(&cpus);
+        CPU_SET(i, &cpus);
         pthread_create(threads + i, nullptr, schedworker, this);
+        if (pthread_setaffinity_np(threads[i], sizeof(cpu_set_t), &cpus) < 0)
+            err(EXIT_FAILURE, "pthread_setaffinity_np");
+    }
     
     /* priority boost thread */
     // pthread_create(threads + ncpus, nullptr, prioboostworker, this);

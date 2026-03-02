@@ -46,10 +46,10 @@ main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     u8 opt = 0;
-    u32 ncpus = 1;
+    u32 ncpus = std::thread::hardware_concurrency();
     size_t nlevels = 4;
     milliseconds timeslice = 24ms;
-    seconds runtime = 30s;
+    seconds runtime = 15s;
     for (int i = 1; i < argc; ++i) {
         if (!strncmp(argv[i], "-s=rr", 5))
             opt |= S_RR;
