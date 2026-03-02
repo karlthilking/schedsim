@@ -48,45 +48,29 @@ task::~task() noexcept
 {
     delete ru;
     delete stat;
-    fclose(procf);
 }
 
 task_state
 task::get_state() const noexcept
 {
+    if (state == task_state::RUNNABLE || state == task_state::FINISHED)
+        return state;
+    FILE *f;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "/proc/%d/task/%d/status", pid, pid);
+    if ((f = fopen(buf, "r")) == nullptr)
+        err(EXIT_FAILURE, "fopen");
+
     char *line = nullptr;
     size_t sz = 0;
     char state = 'I';
-    while (getline(&line, &sz, procf) > 0) {
-        if (strncmp(line, "State:", strlen("State:") == 0) {
-            if (sscanf(line, "%*s %c", &state) != 1)
-                return task_state::INVALID;
-            break;
-        }
-    }
-    switch (state) {
-    case 'R':
-        return task_state::RUNNING;
-    case 'S':
-        return task_state::SLEEPING;
-    case 'D':
-        return task_state::DISKSLEEP;
-    case 'T':
-        return task_state::STOPPED;
-    case 'Z':
-        return task_state::ZOMBIE;
-    case 'X':
-        return task_state::FINISHED;
-    default:
-        return task_state::INVALID;
-    }
+    while (getline(&line, &sz, f) > 0)
+        if (!strncmp(line, "State:", strlen("State:")))
+            sscanf(line, "%*s %c", &state);
+    
     free(line);
-}
-
-task_state
-task::get_state() const noexcept
-{
-    return state;
+    fclose(f);
+    return static_cast<task_state>(state);
 }
 
 void
@@ -198,12 +182,6 @@ cpu_task::run() noexcept
     else if (pid > 0)
         return;
     
-    /* Open /proc/pid/task/pid/status for tracking process state */
-    char buf[128];
-    snprintf(buf, sizeof(buf), "/proc/%d/task/%d/status", pid, pid);
-    if ((procf = fopen(buf, "r")) == NULL)
-        err(EXIT_FAILURE, "fopen");
-
     if (execl("./bin/cpu_task", "./bin/cpu_task", nullptr) < 0)
         err(EXIT_FAILURE, "execvp");
 }
@@ -218,11 +196,6 @@ mem_task::run() noexcept
         err(EXIT_FAILURE, "fork");
     else if (pid > 0)
         return;
-
-    char buf[128];
-    snprintf(buf, sizeof(buf), "/proc/%d/task/%d/status", pid, pid);
-    if ((procf = fopen(buf, "r") == NULL)
-        err(EXIT_FAILURE, "fopen");
 
     if (execl("./bin/mem_task", "./bin/mem_task", nullptr) < 0)
         err(EXIT_FAILURE, "execvp");

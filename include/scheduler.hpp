@@ -11,21 +11,10 @@
 #include "task.hpp"
 
 namespace scheduler {
-template<typename S>
-concept is_scheduler = requires(S &s, task *t, u32 id)
-{
-    s.enqueue(t);
-    s.template enqueue<cpu_task>(id);
-    s.template enqueue<mem_task>(id);
-};
-
-template<typename S>
-constexpr bool is_scheduler_v = is_scheduler<S>;
-
 template<typename S, typename... Args>
 void 
 run(seconds runtime, u32 num_cpus, Args &&...args)
-requires is_scheduler_v<S> && std::is_constructible_v<S, u32, Args...>
+requires std::is_constructible_v<S, u32, Args...>
 {
     std::vector<task *> tasks;
     tasks.reserve(100);

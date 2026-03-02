@@ -8,7 +8,7 @@
 #include <sys/resource.h>
 #include "types.hpp"
 
-enum class task_state { 
+enum class task_state : char { 
     RUNNABLE    = 'r',
     RUNNING     = 'R',
     SLEEPING    = 'S',
@@ -36,7 +36,6 @@ class task {
 protected:
     struct rusage   *ru;        // resource usage 
     task_stat       *stat;      // time tracking
-    FILE            *procf;     // process status file
     pid_t           pid;        // process id
     u32             task_id;    // program defined id 
     task_state      state;      // task state

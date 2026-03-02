@@ -2,10 +2,9 @@
 #include <queue>
 #include <vector>
 #include <atomic>
-#include <thread>
-#include <condition_variable>
-#include <mutex>
 #include <cassert>
+#include <pthread.h>
+#include <semaphore.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/time.h>
@@ -18,72 +17,67 @@
 
 namespace scheduler {
 u32
-mlfq::cpu_diff(const struct rusage &prev, const struct rusage &cur) 
+mlfq::cpudiff(const struct rusage *cur, const struct rusage *prev) 
 const noexcept
 {
-    return ((cur.ru_utime.tv_sec * 1000) +
-            (cur.ru_utime.tv_usec / 1000) +
-            (cur.ru_stime.tv_sec * 1000) +
-            (cur.ru_stime.tv_usec / 1000)) -
-           ((prev.ru_utime.tv_sec * 1000) +
-            (prev.ru_utime.tv_usec / 1000) +
-            (prev.ru_stime.tv_sec * 1000) +
-            (prev.ru_stime.tv_usec / 1000));
+    return ((cur->ru_utime.tv_sec * 1000) +
+            (cur->ru_utime.tv_usec / 1000) +
+            (cur->ru_stime.tv_sec * 1000) +
+            (cur->ru_stime.tv_usec / 1000)) -
+           ((prev->ru_utime.tv_sec * 1000) +
+            (prev->ru_utime.tv_usec / 1000) +
+            (prev->ru_stime.tv_sec * 1000) +
+            (prev->ru_stime.tv_usec / 1000));
 }
-
-bool
-mlfq::waiting_tasks() const noexcept
-{
-    return std::any_of(begin(tasks), end(tasks), 
-        [&](const std::queue<task *> &q){ return !q.empty(); });
-}
-
+ 
 void
 mlfq::schedule(task *t, u32 lvl) noexcept
 {
-    assert(t->get_state() != task_state::RUNNING ||
-           t->get_state() != task_state::FINISHED);
+    const task_state state = t->get_state();
+    const struct rusage *prev = t->get_rusage();
+    struct rusage cur;
     
-    struct rusage *prev_ru = t->get_rusage();
-    struct rusage cur_ru;
-    
+    switch (state) {
     /* task is running for the first time */
-    if (t->get_state() == task_state::RUNNABLE) {
-        // {
-        //     std::lock_guard<std::mutex> lk(io_mutex);
-        //     std::cout << *t << " started\n";
-        // }
+    case task_state::RUNNABLE:
         t->set_t_firstrun(high_resolution_clock::now());
         t->run();
-    } else if (t->get_state() == task_state::STOPPED) {
-        /*
-         *  Increment task wait time by the difference of the current
-         *  time and previous task stop time
+        pthread_mutex_lock(&io_mtx);
+        std::cout << *t << " started\n";
+        pthread_mutex_unlock(&io_mtx);
+        break;
+    /* task was descheduled and now resuming */
+    case task_state::STOPPED:
+        /* 
+         *  increment task waiting time by the difference between the current
+         *  time and the time it was last stopped
          */
         t->increment_t_waiting(high_resolution_clock::now());
         kill(t->get_pid(), SIGCONT);
+        break;
+    default:
+        err(EXIT_FAILURE, "unexpected task state");
     }
     t->set_state(task_state::RUNNING);
-
-    std::this_thread::sleep_for(TIMESLICE(lvl));
+    
+    /* let task run for its timeslice */
+    usleep(TIMESLICE_US(lvl));
     kill(t->get_pid(), SIGSTOP);
 
     int rc, wstat;
-    if ((rc = wait4(t->get_pid(), &wstat, WUNTRACED, &cur_ru)) < 0)
+    if ((rc = wait4(t->get_pid(), &wstat, WUNTRACED, &cur)) < 0)
         err(EXIT_FAILURE, "wait4");
-    else if (rc == 0)
-        err(EXIT_FAILURE, "child state did not change");
     
     /* child process exited */
     if (WIFEXITED(wstat)) {
         assert(WEXITSTATUS(wstat) == 0);
         t->set_state(task_state::FINISHED);
         t->set_t_completion(high_resolution_clock::now());
-        t->set_rusage(&cur_ru);
-        // {
-        //     std::lock_guard<std::mutex> lk(io_mutex);
-        //     std::cout << *t << " exited\n";
-        // }
+        t->set_rusage(&cur);
+
+        pthread_mutex_lock(&io_mtx);
+        std::cout << *t << " exited\n";
+        pthread_mutex_unlock(&io_mtx);
     } 
     /* child process was stopped from the stop signal */
     else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) == SIGSTOP) {
@@ -94,117 +88,107 @@ mlfq::schedule(task *t, u32 lvl) noexcept
          *  in cpu time at the queue level than demote it
          *  to a lower queue level
          */
-        if (cpu_diff(*prev_ru, cur_ru) >= TIMESLICE(lvl).count()) {
-            t->set_rusage(&cur_ru);
+        if (cpudiff(prev, &cur) >= TIMESLICE_MS(lvl)) {
+            t->set_rusage(&cur);
             enqueue(t, (lvl < tasks.size() - 1) ? lvl + 1 : lvl);
         } else {
+            /* 
+             *  keep task on same queue level if it did not consume its
+             *  full timeslice
+             */
             enqueue(t, lvl);
         }
     }
-    /* check for unexpected child process behavior */
-    // else if (WIFSIGNALED(wstat) && WTERMSIG(wstat) == SIGSTOP) {
-    //     err(EXIT_FAILURE, "SIGSTOP caused child to terminate");
-    // } else if (WIFSTOPPED(wstat) && WSTOPSIG(wstat) != SIGSTOP) {
-    //     err(EXIT_FAILURE, "child received unexpected stop signal");
-    // }
+}
+
+void *
+mlfq::prioboostworker(void *arg) noexcept
+{
+    mlfq *m = (mlfq *)arg;
+    while (1) {
+        usleep(PRIOBOOSTFREQ_US);
+        if (MLFQ_STOP(m->flag))
+            return nullptr;
+        
+        pthread_mutex_lock(&(m->task_mtx));
+        /* migrate all tasks to the top priority level */
+        for (u32 lvl = 1; lvl < m->tasks.size(); ++lvl) {
+            while (!m->tasks[lvl].empty()) {
+                m->tasks[0].push(m->tasks[lvl].front());
+                m->tasks[lvl].pop();
+            }
+        }
+        pthread_mutex_unlock(&(m->task_mtx));
+    }
+    return nullptr;
+}
+
+void *
+mlfq::schedworker(void *arg) noexcept
+{
+    mlfq *m = (mlfq *)arg;
+    task *t;
+    u32 lvl;
+    do {
+        t = nullptr;
+        sem_wait(&(m->sem));
+        pthread_mutex_lock(&(m->task_mtx));
+        for (lvl = 0; lvl < m->tasks.size(); ++lvl) {
+            if (m->tasks[lvl].empty())
+                continue;
+            t = m->tasks[lvl].front();
+            m->tasks[lvl].pop();
+            break;
+        }
+        pthread_mutex_unlock(&(m->task_mtx));
+        if (t)
+            m->schedule(t, lvl);
+        else
+            break;
+    } while (1);
+    
+    return nullptr;
 }
 
 mlfq::mlfq(u32 ncpus, u32 nlevels) noexcept
     : tasks(std::vector<std::queue<task *>>(nlevels)),
-      conds(std::vector<std::condition_variable>(nlevels)),
-      locks(std::vector<std::mutex>(nlevels)),
+      ncpus(ncpus),
       flag(0)
 {
-    threads.reserve(ncpus + 1);
-    for (u32 cpuid = 0; cpuid < ncpus; ++cpuid) {
-        /* scheduler thread */
-        threads.emplace_back([&]{
-            while (true) {
-                task *t = nullptr;
-                u32 lvl;
-                for (lvl = 0; lvl < tasks.size(); ++lvl) {
-                    std::unique_lock<std::mutex> lk(locks[lvl]);
-                    /* 
-                     *  wakeup on events that necessitate a response from
-                     *  a scheduling thread (e.g. exit when flag indicates
-                     *  that scheduling threads should stop or move tasks
-                     *  to highest queue level in the event of a priority
-                     *  boost); also wakeup if any tasks are waiting to
-                     *  be scheduled
-                     */
-                    conds[lvl].wait(lk, [&]{
-                        return MLFQ_EVENT(flag) || waiting_tasks();
-                    });
-                    if (MLFQ_STOP(flag) && !waiting_tasks())
-                        return;
-                    else if (tasks[lvl].empty()) {
-                        continue;
-                    }
-                    t = tasks[lvl].front();
-                    tasks[lvl].pop();
-                    break;
-                }
-                if (t && MLFQ_PRIO(flag))
-                    enqueue(t, 0);
-                else if (t)
-                    schedule(t, lvl);
-            }
-        });
-    }
-
+    pthread_mutex_init(&task_mtx, nullptr);
+    pthread_mutex_init(&io_mtx, nullptr);
+    /* store 0 to block threads until tasks are ready */
+    sem_init(&sem, 0, 0);
+    
+    threads = (pthread_t *)malloc(sizeof(pthread_t) * (ncpus + 1));
+    /* scheduler threads */
+    for (u32 i = 0; i < ncpus; ++i)
+        pthread_create(threads + i, nullptr, schedworker, this);
+    
     /* priority boost thread */
-    threads.emplace_back([&]{
-        do {
-            std::this_thread::sleep_for(PRIO_BOOST_FREQ);
-            if (MLFQ_STOP(flag.fetch_or(MLFQ_PRIO_FLAG))) {
-                flag.fetch_xor(MLFQ_PRIO_FLAG);
-                return;
-            }
-            for (u32 lvl = 1; lvl < tasks.size(); ++lvl) {
-                {
-                    std::lock_guard<std::mutex> lk(locks[lvl]);
-                    conds[lvl].notify_all();
-                }
-            }
-        } while (!MLFQ_STOP(flag.fetch_xor(MLFQ_PRIO_FLAG)));
-    });
+    // pthread_create(threads + ncpus, nullptr, prioboostworker, this);
 }
 
+/* join all threads and clean up all resources */
 mlfq::~mlfq() noexcept
 {
     flag.fetch_or(MLFQ_STOP_FLAG);
-    for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
-        std::lock_guard<std::mutex> lk(locks[lvl]);
-        assert(MLFQ_STOP(flag));
-        conds[lvl].notify_all();
-    }
-    for (std::thread &th : threads) {
-        assert(th.joinable());
-        th.join();
-    }
+    for (u32 i = 0; i < ncpus; ++i)
+        sem_post(&sem);
+    for (u32 i = 0; i < ncpus; ++i)
+        pthread_join(threads[i], nullptr);
+    pthread_mutex_destroy(&task_mtx);
+    pthread_mutex_destroy(&io_mtx);
+    sem_destroy(&sem);
+    free(threads);
 }
-
-// void
-// mlfq::halt() noexcept
-// {
-//     flag.fetch_or(MLFQ_HALT_FLAG);
-//     for (u32 lvl = 0; lvl < tasks.size(); ++lvl) {
-//         {
-//             std::lock_guard<std::mutex> lk(locks[lvl]);
-//             conds[lvl].notify_all();
-//         }
-//     }
-//     for (std::thread &th : threads) {
-//         assert(th.joinable());
-//         th.join();
-//     }
-// }
 
 void
 mlfq::enqueue(task *t, u32 lvl) noexcept
 {
-    std::lock_guard<std::mutex> lk(locks[lvl]);
+    pthread_mutex_lock(&task_mtx);
     tasks[lvl].push(t);
-    conds[lvl].notify_one();
+    sem_post(&sem);
+    pthread_mutex_unlock(&task_mtx);
 }
 } // namespace scheduler
