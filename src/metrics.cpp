@@ -4,6 +4,8 @@
 #include <cassert>
 #include <iostream>
 #include <iomanip>
+#include <unistd.h>
+#include <sys/sysinfo.h>
 #include "../include/task.hpp"
 #include "../include/types.hpp"
 #include "../include/metrics.hpp"
@@ -45,7 +47,7 @@ metrics::get_cpu_time(struct rusage *ru) const noexcept
     return cpu_t;
 }
 
-metrics::metrics(const std::vector<task *> &tasks, u32 num_cpus,
+metrics::metrics(const std::vector<task *> &tasks, 
                  time_point<high_resolution_clock> t_start) noexcept
     : avg_t_turnaround(0.0f), 
       avg_t_response(0.0f), 
@@ -61,6 +63,7 @@ metrics::metrics(const std::vector<task *> &tasks, u32 num_cpus,
       avg_rt_mem_tasks(0.0f),
       t_total(0.0f)
 {
+    u32 ncpus = get_nprocs();
     auto t_now = high_resolution_clock::now();
     t_total = duration_cast<milliseconds>(t_now - t_start).count();
     
@@ -93,7 +96,7 @@ metrics::metrics(const std::vector<task *> &tasks, u32 num_cpus,
     avg_t_response      /= num_tasks;                       // (2)
     avg_t_waiting       /= num_tasks;                       // (3)
     avg_t_running       /= num_tasks;                       // (4)
-    cpu_utilization     /= ((t_total * num_cpus) / 100);    // (5)
+    cpu_utilization     /= ((t_total * ncpus) / 100);       // (5)
     throughput          /= (t_total / 1000);                // (6)
     avg_rt_all_tasks    /= num_tasks;                       // (11)
     avg_rt_cpu_tasks    /= num_cpu_tasks;                   // (12)

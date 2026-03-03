@@ -36,8 +36,8 @@ rr::schedule(task *t) noexcept
         err(EXIT_FAILURE, "unexpected task state");
     }
     t->set_state(task_state::RUNNING);
-
-    std::this_thread::sleep_for(timeslice);
+    
+    usleep(RR_TIMESLICE_US);
     kill(t->get_pid(), SIGSTOP);
     
     struct rusage ru;
@@ -59,11 +59,11 @@ rr::schedule(task *t) noexcept
     }
 }
 
-rr::rr(u32 num_cpus, milliseconds timeslice) noexcept
-    : timeslice(timeslice), sem(1), flag(0)
+rr::rr(u32 ncpus) noexcept
+    : sem(1), flag(0)
 {
-    threads.reserve(num_cpus);
-    for (u32 cpuid = 0; cpuid < num_cpus; ++cpuid) {
+    threads.reserve(ncpus);
+    for (u32 cpuid = 0; cpuid < ncpus; ++cpuid) {
         threads.emplace_back([this]{
             while (true) {
                 task *t = nullptr;

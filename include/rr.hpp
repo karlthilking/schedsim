@@ -9,25 +9,27 @@
 #include <unistd.h>
 #include <type_traits>
 #include <sys/types.h>
+#include <sys/sysinfo.h>
 #include <cstdint>
 #include "types.hpp"
 #include "task.hpp"
 
+#define RR_TIMSLICE_MS  48
+#define RR_TIMESLICE_US 48000
 #define RR_STOP_FLAG    0x1
 #define RR_STOP(flag)   ((flag) & RR_STOP_FLAG)
 
 namespace scheduler {
 class rr {
 private:
-    std::queue<task *>          tasks;      // 40 bytes
-    std::vector<std::thread>    threads;    // 24 bytes
-    milliseconds                timeslice;  // 8 bytes
-    std::binary_semaphore       sem;        // 4 bytes
-    u8                          flag;       // 1 byte
+    std::queue<task *>          tasks;
+    std::vector<std::thread>    threads;
+    std::binary_semaphore       sem; 
+    u8                          flag; 
 
     void schedule(task *t) noexcept;
 public:
-    rr(u32 num_cpus, milliseconds timeslice) noexcept;
+    rr(u32 ncpus = get_nprocs()) noexcept;
     ~rr() noexcept;
 
     void enqueue(task *t) noexcept;

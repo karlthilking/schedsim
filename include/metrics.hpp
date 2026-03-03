@@ -47,7 +47,7 @@ private:
     bool is_mem_task(task *t) const noexcept;
     float get_cpu_time(struct rusage *ru) const noexcept;
 public:
-    metrics(const std::vector<task *> &tasks, u32 num_cpus,
+    metrics(const std::vector<task *> &tasks,
             time_point<high_resolution_clock> t_start) noexcept;
     
     friend std::ostream &

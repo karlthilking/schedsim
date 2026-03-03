@@ -3,7 +3,7 @@
 #endif
 #include <iostream>
 #include <queue>
-#include <vector>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <pthread.h>
@@ -11,6 +11,7 @@
 #include <semaphore.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
+#include <sys/sysinfo.h>
 #include <sys/time.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -109,20 +110,24 @@ void *
 mlfq::prioboostworker(void *arg) noexcept
 {
     mlfq *m = (mlfq *)arg;
+    bool empty;
     while (1) {
         usleep(PRIOBOOSTFREQ_US);
-        if (MLFQ_STOP(m->flag))
-            return nullptr;
-        
+        empty = true;
         pthread_mutex_lock(&(m->task_mtx));
         /* migrate all tasks to the top priority level */
         for (u32 lvl = 1; lvl < m->tasks.size(); ++lvl) {
-            while (!m->tasks[lvl].empty()) {
-                m->tasks[0].push(m->tasks[lvl].front());
-                m->tasks[lvl].pop();
+            if (!m->tasks[lvl].empty()) {
+                empty = false;
+                while (!m->tasks[lvl].empty()) {
+                    m->tasks[0].push(m->tasks[lvl].front());
+                    m->tasks[lvl].pop();
+                }
             }
         }
         pthread_mutex_unlock(&(m->task_mtx));
+        if (empty && MLFQ_STOP(m->flag.load()))
+            return nullptr;
     }
     return nullptr;
 }
@@ -154,29 +159,29 @@ mlfq::schedworker(void *arg) noexcept
     return nullptr;
 }
 
-mlfq::mlfq(u32 ncpus, u32 nlevels) noexcept
-    : tasks(std::vector<std::queue<task *>>(nlevels)),
-      ncpus(ncpus),
+mlfq::mlfq(u32 ncpus) noexcept
+    : ncpus(ncpus),
       flag(0)
 {
     pthread_mutex_init(&task_mtx, nullptr);
     pthread_mutex_init(&io_mtx, nullptr);
-    /* store 0 to block threads until tasks are ready */
     sem_init(&sem, 0, 0);
     
-    threads = (pthread_t *)malloc(sizeof(pthread_t) * ncpus);
+    /* one scheduler thread per cpu + priority boost thread */
+    threads = (pthread_t *)malloc(sizeof(pthread_t) * (ncpus + 1));
     cpu_set_t cpus;
-    /* scheduler threads */
+    CPU_ZERO(&cpus);
+
+    /* launch one scheduler thread per cpu and pin to that cpu */
     for (u32 i = 0; i < ncpus; ++i) {
-        CPU_ZERO(&cpus);
         CPU_SET(i, &cpus);
         pthread_create(threads + i, nullptr, schedworker, this);
         if (pthread_setaffinity_np(threads[i], sizeof(cpu_set_t), &cpus) < 0)
             err(EXIT_FAILURE, "pthread_setaffinity_np");
+        CPU_CLR(i, &cpus);
     }
     
-    /* priority boost thread */
-    // pthread_create(threads + ncpus, nullptr, prioboostworker, this);
+    pthread_create(threads + ncpus, nullptr, prioboostworker, this);
 }
 
 /* join all threads and clean up all resources */
@@ -187,6 +192,8 @@ mlfq::~mlfq() noexcept
         sem_post(&sem);
     for (u32 i = 0; i < ncpus; ++i)
         pthread_join(threads[i], nullptr);
+    
+    pthread_join(threads[ncpus], nullptr);
     pthread_mutex_destroy(&task_mtx);
     pthread_mutex_destroy(&io_mtx);
     sem_destroy(&sem);

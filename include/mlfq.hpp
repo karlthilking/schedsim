@@ -3,13 +3,14 @@
 
 #include <iostream>
 #include <queue>
-#include <vector>
+#include <array>
 #include <atomic>
 #include <type_traits>
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/sysinfo.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include "types.hpp"
@@ -28,13 +29,13 @@
 namespace scheduler {
 class mlfq {
 private:
-    std::vector<std::queue<task *>> tasks;      // array of queues per level
-    pthread_mutex_t                 task_mtx;   // lock for task queue
-    pthread_mutex_t                 io_mtx;     // lock for stdin/stdout
-    sem_t                           sem;        // producer/consumer semaphore
-    pthread_t                       *threads;   // workers
-    u32                             ncpus;      // number of cpus
-    std::atomic<u8>                 flag;       // atomic flag for events
+    std::array<std::queue<task *>, 4>   tasks;      // array of queues per level
+    pthread_mutex_t                     task_mtx;   // lock for task queue
+    pthread_mutex_t                     io_mtx;     // lock for stdin/stdout
+    sem_t                               sem;        // producer/consumer semaphore
+    pthread_t                           *threads;   // workers
+    u32                                 ncpus;      // number of cpus
+    std::atomic<u8>                     flag;       // atomic flag for events
     
     u32 cpudiff(const struct rusage *prev, const struct rusage *cur) 
     const noexcept;
@@ -43,7 +44,8 @@ private:
     static void *schedworker(void *arg) noexcept;
     static void *prioboostworker(void *arg) noexcept;
 public:
-    mlfq(u32 ncpus, u32 nlevels) noexcept;
+    /* default parameters: all processors, 4 queue levels */
+    mlfq(u32 ncpus = get_nprocs()) noexcept;
     ~mlfq() noexcept; 
 
     void enqueue(task *t, u32 lvl = 0) noexcept; 
