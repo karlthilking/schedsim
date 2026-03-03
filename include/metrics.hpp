@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <chrono>
+#include <sys/time.h>
 #include "types.hpp"
 #include "task.hpp"
 
@@ -36,19 +37,20 @@ private:
     u32 num_cpu_tasks;      // 9
     u32 num_mem_tasks;      // 10
     
-    float avg_rt_all_tasks; // 11
-    float avg_rt_cpu_tasks; // 12
-    float avg_rt_mem_tasks; // 13 
+    float avg_rt_cpu_tasks; // 11
+    float avg_rt_mem_tasks; // 12
 
-    float t_total;          // 14
+    float t_total;          // 13
 
     /* helper functions */
     bool is_cpu_task(task *t) const noexcept;
     bool is_mem_task(task *t) const noexcept;
-    float get_cpu_time(struct rusage *ru) const noexcept;
+    float get_cpu_time(const struct rusage *ru) const noexcept;
+    float get_time_diff(const struct timeval &l, const struct timeval &r)
+    const noexcept;
 public:
-    metrics(const std::vector<task *> &tasks,
-            time_point<high_resolution_clock> t_start) noexcept;
+    metrics(const std::vector<task *> &tasks, 
+            const struct timeval &t_start) noexcept;
     
     friend std::ostream &
     operator<<(std::ostream &os, const metrics& m);

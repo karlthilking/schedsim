@@ -127,7 +127,7 @@ mlfq::prioboostworker(void *arg) noexcept
         }
         pthread_mutex_unlock(&(m->task_mtx));
         if (empty && MLFQ_STOP(m->flag.load()))
-            return nullptr;
+            break;
     }
     return nullptr;
 }

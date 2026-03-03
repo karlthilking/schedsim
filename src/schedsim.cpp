@@ -47,6 +47,7 @@ main(int argc, char *argv[])
                 std::cerr << "A runtime value must be provided after -r\n";
             else
                 runtime = strtoul(argv[i + 1], nullptr, 10);
+            i++;
         } else
             std::cerr << "Unrecognized Argument: " << argv[i] << '\n';
     }
